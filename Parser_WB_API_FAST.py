@@ -56,7 +56,7 @@ def load_api_keys_from_env():
 def get_product_info(articles, api_keys_list, cabinet_names=None):
     """
     Получает информацию о товарах через Content API
-    Возвращает словарь {артикул: {название, nmID,vendorCode}}
+    Возвращает словарь {артикул: {название, nmID, vendorCode, cabinet}}
     """
     print("\n[API] Загрузка информации о товарах (названия, ID)...")
     
@@ -65,6 +65,7 @@ def get_product_info(articles, api_keys_list, cabinet_names=None):
         return {}
     
     product_info = {}
+    cabinet_map = {}  # nmID -> cabinet
     
     # Пробуем каждый API ключ
     for idx, api_key in enumerate(api_keys_list, 1):
@@ -133,7 +134,8 @@ def get_product_info(articles, api_keys_list, cabinet_names=None):
                                 product_info[nm_id] = {
                                     "title": title,
                                     "nmID": nm_id,
-                                    "vendorCode": vendor_code
+                                    "vendorCode": vendor_code,
+                                    "cabinet": cabinet_name
                                 }
                                 total_found_this_cabinet += 1
                     
@@ -170,12 +172,13 @@ def get_product_info(articles, api_keys_list, cabinet_names=None):
 def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
     """
     Получает ВСЕ цены через Prices API - ДО и ПОСЛЕ СПП!
-    Возвращает словарь {артикул: {price_original, price_before_spp, price_after_spp, discount, spp}}
+    Возвращает словарь {артикул: {price_original, price_before_spp, price_after_spp, discount, spp, stocks}}
     
     Структура цен WB API:
     - price: базовая цена (без скидок)
     - discountedPrice: цена после обычных скидок (ДО СПП)
     - clubDiscountedPrice: финальная цена (ПОСЛЕ СПП и скидок кошелька)
+    - stocks: остатки товара
     """
     print("\n[API] Загрузка цен ДО и ПОСЛЕ СПП через API...")
     
@@ -237,6 +240,9 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
                             price_discounted = size_data.get("discountedPrice", 0)  # После обычных скидок (ДО СПП)
                             price_club = size_data.get("clubDiscountedPrice", 0)  # После СПП (финальная)
                             
+                            # Остатки - пробуем разные поля
+                            stocks = size_data.get("stocks", 0) or size_data.get("wh", 0) or item.get("stocks", 0)
+                            
                             # Проценты
                             discount_percent = item.get("discount", 0)  # Обычная скидка
                             club_discount_percent = item.get("clubDiscount", 0)  # СПП
@@ -255,7 +261,8 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
                                     "price_before_spp": float(price_discounted) if price_discounted else 0,
                                     "price_after_spp": float(price_club) if price_club else 0,
                                     "discount": float(discount_percent) if discount_percent else 0,
-                                    "spp": float(club_discount_percent) if club_discount_percent else 0
+                                    "spp": float(club_discount_percent) if club_discount_percent else 0,
+                                    "stocks": int(stocks) if stocks else 0
                                 }
                     
                     print(f"    Найдено {len(goods_list)} товаров в этом кабинете")
@@ -308,12 +315,33 @@ def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
     print("\n[2/4] Получение информации о товарах через Content API...")
     product_info_dict = get_product_info(articles, api_keys, cabinet_names)
     
+    print(f"\n[DEBUG] Загружено товаров с инфо: {len(product_info_dict)}")
+    if len(product_info_dict) > 0:
+        first_key = list(product_info_dict.keys())[0]
+        print(f"[DEBUG] Пример товара: {first_key} = {product_info_dict[first_key]}")
+    
     # Шаг 2: Получаем цены (до и после СПП)
     print("\n[3/4] Получение цен через Prices API...")
     prices_dict = get_prices_full_info(articles, api_keys, cabinet_names)
     
-    # Шаг 3: Объединяем данные и сохраняем
-    print(f"\n[4/4] Сохранение результатов...")
+    print(f"\n[DEBUG] Загружено цен: {len(prices_dict)}")
+    if len(prices_dict) > 0:
+        first_key = list(prices_dict.keys())[0]
+        print(f"[DEBUG] Пример цены: {first_key} = {prices_dict[first_key]}")
+    
+    # Шаг 3: Очищаем старые данные
+    print(f"\n[4/5] Очистка старых записей...")
+    
+    # Удаляем все строки кроме заголовка
+    if ws_out.max_row > 1:
+        ws_out.delete_rows(2, ws_out.max_row)
+        print(f"    ✓ Удалено старых записей: {ws_out.max_row - 1}")
+    
+    # Создаем заголовки
+    ws_out.append(["Дата", "Кабинет", "Артикул", "Название", "Цена До СПП", "Наличие", "Цена После СПП", "СПП %", "Скидка %"])
+    
+    # Шаг 4: Объединяем данные и сохраняем
+    print(f"\n[5/5] Сохранение результатов...")
     print("="*80)
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -327,28 +355,38 @@ def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
         
         title = info.get("title", "Не найдено")
         nm_id = info.get("nmID", article)
+        cabinet = info.get("cabinet", "Неизвестно")
         
         price_original = prices.get("price_original", 0)
         price_before = prices.get("price_before_spp", 0)
         price_after = prices.get("price_after_spp", 0)
         discount = prices.get("discount", 0)
         spp = prices.get("spp", 0)
+        stocks = prices.get("stocks", 0)
         
         # Считаем процент скидки СПП (от цены до СПП к цене после)
         spp_percent_calc = None
         if price_before and price_after and price_before > 0:
             spp_percent_calc = ((price_before - price_after) / price_before) * 100
         
-        print(f"[{i}/{total}] {nm_id} | {title[:40]}")
-        print(f"         До СПП: {price_before}₽ → После СПП: {price_after}₽ (СПП: {spp}%)")
+        print(f"[{i}/{total}] [{cabinet}] {nm_id} | {title[:40]}")
+        print(f"         До СПП: {price_before}₽ → После СПП: {price_after}₽ (СПП: {spp}%) | Остаток: {stocks} шт")
+        
+        # Статус наличия (столбец F)
+        if stocks > 0:
+            stock_status = f"{stocks} шт"
+        else:
+            stock_status = "Нет в наличии"
         
         if price_before or price_after:
-            # Сохраняем: Дата | Артикул | Название | Цена До СПП | Цена После СПП | СПП % | Скидка %
+            # Сохраняем: Дата | Кабинет | Артикул | Название | Цена До СПП | Наличие | Цена После СПП | СПП % | Скидка %
             new_row = [
                 timestamp,
+                cabinet,
                 nm_id,
                 title,
                 price_before if price_before else None,
+                stock_status,  # Столбец F - наличие
                 price_after if price_after else None,
                 spp_percent_calc if spp_percent_calc else spp,
                 discount if discount else None
@@ -357,12 +395,14 @@ def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
             success += 1
         else:
             print(f"         [!] Цены не найдены")
-            # Сохраняем и без цен, чтобы видеть что товар в базе
+            # Сохраняем и без цен
             new_row = [
                 timestamp,
+                cabinet,
                 nm_id,
                 title,
                 None,
+                stock_status,  # Столбец F - наличие
                 None,
                 None,
                 None
