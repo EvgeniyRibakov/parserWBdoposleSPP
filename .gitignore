@@ -1,0 +1,29 @@
+# Секретные данные
+.env
+
+# Excel файлы с данными
+Парсер цен.xlsx
+~$*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
