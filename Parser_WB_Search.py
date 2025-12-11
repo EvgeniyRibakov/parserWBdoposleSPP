@@ -542,7 +542,19 @@ def get_price_from_product_page(driver, product_url, article):
             driver.get(product_url)
             human_delay(2, 4)
         
-        # Проверяем наличие товара (ищем сообщения о недоступности)
+        # КРИТИЧНО: Проверяем наличие элемента "Нет в наличии"
+        # <h2 class="... soldOutProduct--vCzrv">Нет в наличии</h2>
+        try:
+            sold_out_element = driver.find_element(By.CSS_SELECTOR, "h2[class*='soldOutProduct']")
+            print(f"  ⚠ Товар недоступен: найден элемент 'soldOutProduct' - {sold_out_element.text}")
+            # Закрываем вкладку и пропускаем товар
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
+            return 0
+        except:
+            pass  # Элемент не найден - товар в наличии
+        
+        # Дополнительная проверка по ключевым словам (fallback)
         page_text = driver.page_source.lower()
         unavailable_keywords = [
             'нет в наличии',

@@ -1,31 +1,24 @@
-2025/12/11-18:28:46.597 4090 Reusing MANIFEST D:\Downloads\wb beforeafter spp prices\chrome_parser_profile\Default\IndexedDB\https_www.wildberries.ru_0.indexeddb.leveldb/MANIFEST-000001
-2025/12/11-18:28:46.598 4090 Recovering log #197
-2025/12/11-18:28:46.598 4090 Reusing old log D:\Downloads\wb beforeafter spp prices\chrome_parser_profile\Default\IndexedDB\https_www.wildberries.ru_0.indexeddb.leveldb/000197.log 
-2025/12/11-18:28:46.598 4090 Delete type=2 #177
-2025/12/11-18:28:46.598 4090 Delete type=2 #178
-2025/12/11-18:28:46.598 4090 Delete type=2 #179
-2025/12/11-18:28:46.598 4090 Delete type=2 #180
-2025/12/11-18:28:46.598 4090 Delete type=2 #183
-2025/12/11-18:28:46.598 4090 Delete type=2 #184
-2025/12/11-18:28:46.598 4090 Delete type=2 #190
-2025/12/11-18:28:46.598 4090 Delete type=2 #191
-2025/12/11-18:28:46.598 4090 Delete type=2 #192
-2025/12/11-18:28:46.671 58f0 Compacting 1@1 + 3@2 files
-2025/12/11-18:28:46.957 58f0 Generated table #207@1: 40011 keys, 2191983 bytes
-2025/12/11-18:28:47.473 58f0 Generated table #208@1: 85690 keys, 2240653 bytes
-2025/12/11-18:28:47.473 58f0 Level-0 table #210: started
-2025/12/11-18:28:47.551 58f0 Level-0 table #210: 61213 bytes OK
-2025/12/11-18:28:47.598 58f0 Delete type=0 #197
-2025/12/11-18:28:47.835 58f0 Generated table #211@1: 10651 keys, 2150042 bytes
-2025/12/11-18:28:48.170 58f0 Generated table #212@1: 172 keys, 30613 bytes
-2025/12/11-18:28:48.170 58f0 Compacted 1@1 + 3@2 files => 6613291 bytes
-2025/12/11-18:28:48.276 58f0 compacted to: files[ 1 2 13 0 0 0 0 ]
-2025/12/11-18:28:48.276 58f0 Manual compaction at level-0 from '\x00\x17\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x18\x00\x00\x00' @ 0 : 0; will stop at '\x00\x17\x00\x00\x05' @ 1402113 : 1
-2025/12/11-18:28:48.276 58f0 Compacting 1@0 + 2@1 files
-2025/12/11-18:28:48.329 58f0 Generated table #213@0: 35 keys, 30251 bytes
-2025/12/11-18:28:48.503 58f0 Generated table #214@0: 25251 keys, 2161412 bytes
-2025/12/11-18:28:48.703 58f0 Generated table #215@0: 75192 keys, 1109927 bytes
-2025/12/11-18:28:48.703 58f0 Compacted 1@0 + 2@1 files => 3301590 bytes
-2025/12/11-18:28:48.768 58f0 compacted to: files[ 0 3 13 0 0 0 0 ]
-2025/12/11-18:28:48.768 58f0 Delete type=2 #210
-2025/12/11-18:28:48.768 58f0 Manual compaction at level-0 from '\x00\x17\x00\x00\x05' @ 1402113 : 1 .. '\x00\x18\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/12/11-20:03:46.043 3b80 Reusing MANIFEST D:\Downloads\wb beforeafter spp prices\chrome_parser_profile\Default\IndexedDB\https_www.wildberries.ru_0.indexeddb.leveldb/MANIFEST-000001
+2025/12/11-20:03:46.043 3b80 Recovering log #1469
+2025/12/11-20:03:46.060 3b80 Reusing old log D:\Downloads\wb beforeafter spp prices\chrome_parser_profile\Default\IndexedDB\https_www.wildberries.ru_0.indexeddb.leveldb/001469.log 
+2025/12/11-20:03:46.060 3b80 Delete type=2 #1467
+2025/12/11-20:03:46.060 3b80 Delete type=2 #1468
+2025/12/11-20:03:46.107 532c Compacting 1@1 + 2@2 files
+2025/12/11-20:03:46.345 532c Generated table #1473@1: 39911 keys, 2191301 bytes
+2025/12/11-20:03:46.522 532c Generated table #1474@1: 86190 keys, 2241335 bytes
+2025/12/11-20:03:46.522 532c Compacted 1@1 + 2@2 files => 4432636 bytes
+2025/12/11-20:03:46.619 532c compacted to: files[ 0 0 13 0 0 0 0 ]
+2025/12/11-20:03:46.620 532c Delete type=2 #1463
+2025/12/11-20:03:46.620 532c Delete type=2 #1464
+2025/12/11-20:03:46.620 532c Delete type=2 #1471
+2025/12/11-20:03:46.680 635c Level-0 table #1476: started
+2025/12/11-20:03:46.776 635c Level-0 table #1476: 1326973 bytes OK
+2025/12/11-20:03:46.802 635c Delete type=0 #1469
+2025/12/11-20:03:46.803 3b80 Manual compaction at level-0 from '\x00\xc6\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\xc7\x00\x00\x00' @ 0 : 0; will stop at '\x00\xc6\x00\x00\x05' @ 3357913 : 1
+2025/12/11-20:03:46.803 3b80 Compacting 1@0 + 0@1 files
+2025/12/11-20:03:46.868 3b80 Generated table #1477@0: 6072 keys, 49697 bytes
+2025/12/11-20:03:46.996 3b80 Generated table #1478@0: 5024 keys, 1129341 bytes
+2025/12/11-20:03:46.996 3b80 Compacted 1@0 + 0@1 files => 1179038 bytes
+2025/12/11-20:03:47.076 3b80 compacted to: files[ 0 2 13 0 0 0 0 ]
+2025/12/11-20:03:47.076 3b80 Delete type=2 #1476
+2025/12/11-20:03:47.076 3b80 Manual compaction at level-0 from '\x00\xc6\x00\x00\x05' @ 3357913 : 1 .. '\x00\xc7\x00\x00\x00' @ 0 : 0; will stop at (end)
