@@ -75,6 +75,10 @@ SOURCE_PROFILE_FOR_COPY = "Profile 4"  # Откуда копировать cooki
 # Выбор браузера: 'chrome' или 'edge'
 BROWSER_TYPE = 'chrome'  # 'chrome' или 'edge'
 
+# Режим работы браузера
+HEADLESS_MODE = False  # True = фоновый режим (без визуального окна), False = видимый браузер
+# Примечание: В headless режиме нельзя авторизоваться вручную, используй готовый профиль!
+
 # Пауза для ручной авторизации при первом запуске
 WAIT_FOR_MANUAL_LOGIN = True  # Ждать пока пользователь авторизуется
 MANUAL_LOGIN_TIMEOUT = 120  # Таймаут ожидания авторизации (секунды)
@@ -465,18 +469,22 @@ def setup_browser_driver():
                         print(f"[!] Профиль '{SOURCE_PROFILE_FOR_COPY}' не найден, запускаю без копирования")
                 
                 if USE_TEMP_PROFILE:
+                    mode_text = "headless (фоновый)" if HEADLESS_MODE else "видимый"
                     print(f"[ЛОГ] Запуск Chrome с профилем: {TEMP_PROFILE_DIR}...")
+                    print(f"[ЛОГ] Режим: {mode_text}")
                     driver = uc.Chrome(
                         user_data_dir=TEMP_PROFILE_DIR,
-                        headless=False,
+                        headless=HEADLESS_MODE,
                         use_subprocess=False,
                         version_main=143
                     )
                     print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
                 else:
+                    mode_text = "headless (фоновый)" if HEADLESS_MODE else "видимый"
                     print(f"[ЛОГ] Запуск Chrome БЕЗ профиля (временный)...")
+                    print(f"[ЛОГ] Режим: {mode_text}")
                     driver = uc.Chrome(
-                        headless=False,
+                        headless=HEADLESS_MODE,
                         use_subprocess=False,
                         version_main=143
                     )
@@ -723,8 +731,8 @@ def main():
         
         print("    ✓ Chrome запущен")
         
-        # Пауза для ручной авторизации
-        if WAIT_FOR_MANUAL_LOGIN:
+        # Пауза для ручной авторизации (только в видимом режиме)
+        if WAIT_FOR_MANUAL_LOGIN and not HEADLESS_MODE:
             print(f"\n{'='*80}")
             print("⏸  ПАУЗА ДЛЯ АВТОРИЗАЦИИ")
             print(f"{'='*80}")
@@ -736,6 +744,10 @@ def main():
             print(f"\n⏱  Таймаут: {MANUAL_LOGIN_TIMEOUT} секунд")
             print(f"   (или нажмите ENTER когда будете готовы)")
             print(f"\n{'='*80}\n")
+        elif WAIT_FOR_MANUAL_LOGIN and HEADLESS_MODE:
+            print(f"\n⚠️  ВНИМАНИЕ: Headless режим активен!")
+            print(f"   Авторизация через браузер невозможна (браузер не виден).")
+            print(f"   Убедитесь, что профиль уже авторизован или используйте видимый режим для первой авторизации.\n")
             
             try:
                 # Открываем главную WB для авторизации
