@@ -3,6 +3,7 @@ openpyxl
 python-dotenv
 selenium
 webdriver-manager
+undetected-chromedriver
 
 
 
