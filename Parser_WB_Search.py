@@ -26,6 +26,7 @@ import time
 import random
 import re
 import subprocess
+import shutil
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
@@ -60,11 +61,19 @@ USE_REMOTE_CHROME = False
 CHROME_DEBUG_PORT = 9222
 
 # Использовать временный профиль для парсинга (избегает конфликтов с запущенным Chrome)
-USE_TEMP_PROFILE = False
-TEMP_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_temp_profile_copy")
+USE_TEMP_PROFILE = True
+TEMP_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_parser_profile")
+
+# Копировать данные из Profile 4 в рабочий профиль
+COPY_PROFILE_DATA = True
+SOURCE_PROFILE_FOR_COPY = "Profile 4"  # Откуда копировать cookies
 
 # Выбор браузера: 'chrome' или 'edge'
 BROWSER_TYPE = 'chrome'  # 'chrome' или 'edge'
+
+# Пауза для ручной авторизации при первом запуске
+WAIT_FOR_MANUAL_LOGIN = True  # Ждать пока пользователь авторизуется
+MANUAL_LOGIN_TIMEOUT = 120  # Таймаут ожидания авторизации (секунды)
 
 
 def check_chrome_running():
@@ -125,6 +134,87 @@ def check_remote_chrome_available():
     except Exception as e:
         print(f"[ЛОГ] Remote Chrome недоступен: {e}")
         return False
+
+
+def copy_profile_data(source_profile, target_profile, copy_cookies=True, copy_storage=True):
+    """
+    Копирует данные из одного профиля Chrome в другой
+    source_profile: путь к исходному профилю (Profile 4)
+    target_profile: путь к целевому профилю
+    """
+    print(f"\n{'='*60}")
+    print(f"[КОПИРОВАНИЕ] Перенос данных из Profile 4")
+    print(f"{'='*60}")
+    print(f"[ЛОГ] Источник: {source_profile}")
+    print(f"[ЛОГ] Назначение: {target_profile}")
+    
+    if not os.path.exists(source_profile):
+        print(f"[!] ОШИБКА: Исходный профиль не найден!")
+        return False
+    
+    if not os.path.exists(target_profile):
+        print(f"[ЛОГ] Создаю целевую директорию...")
+        os.makedirs(target_profile, exist_ok=True)
+    
+    files_to_copy = []
+    
+    if copy_cookies:
+        # Файлы с cookies и сессиями
+        files_to_copy.extend([
+            "Cookies",
+            "Cookies-journal",
+            "Network\\Cookies",
+            "Network\\Cookies-journal",
+            "Login Data",  # Сохраненные пароли и логины
+            "Login Data-journal",
+        ])
+    
+    if copy_storage:
+        # Local Storage и другие данные
+        files_to_copy.extend([
+            "Local Storage",
+            "Session Storage",
+            "IndexedDB",
+            "Preferences",  # Настройки профиля (ВАЖНО для адреса!)
+            "Web Data",  # Автозаполнение форм (адреса, данные)
+            "Web Data-journal",
+            "History",  # История
+            "History-journal",
+        ])
+    
+    copied_count = 0
+    for file_name in files_to_copy:
+        source_file = os.path.join(source_profile, file_name)
+        target_file = os.path.join(target_profile, file_name)
+        
+        if os.path.exists(source_file):
+            try:
+                # Создаём родительскую директорию если нужно
+                target_dir = os.path.dirname(target_file)
+                if target_dir and not os.path.exists(target_dir):
+                    os.makedirs(target_dir, exist_ok=True)
+                
+                # Копируем файл или директорию
+                if os.path.isdir(source_file):
+                    if os.path.exists(target_file):
+                        shutil.rmtree(target_file)
+                    shutil.copytree(source_file, target_file)
+                    print(f"[ЛОГ] ✓ Скопирована директория: {file_name}")
+                else:
+                    shutil.copy2(source_file, target_file)
+                    file_size = os.path.getsize(source_file)
+                    print(f"[ЛОГ] ✓ Скопирован файл: {file_name} ({file_size} байт)")
+                
+                copied_count += 1
+            except Exception as e:
+                print(f"[ЛОГ] ✗ Ошибка копирования {file_name}: {e}")
+        else:
+            print(f"[ЛОГ] - Файл не найден: {file_name}")
+    
+    print(f"\n[ЛОГ] Итого скопировано: {copied_count} элементов")
+    print(f"{'='*60}\n")
+    
+    return copied_count > 0
 
 
 def cleanup_profile_locks(profile_path):
@@ -356,17 +446,37 @@ def setup_browser_driver():
                 driver = webdriver.Edge(service=service, options=options)
             else:
                 print(f"[ЛОГ] Используем UNDETECTED CHROMEDRIVER...")
-                print(f"[ЛОГ] Запуск Chrome БЕЗ профиля (временный профиль)...")
                 
-                # Запускаем без профиля - создастся временный
-                driver = uc.Chrome(
-                    headless=False,
-                    use_subprocess=False,
-                    version_main=143  # Версия Chrome
-                )
+                # Копируем данные из Profile 4 если нужно
+                if COPY_PROFILE_DATA and USE_TEMP_PROFILE:
+                    source_profile_path = os.path.join(CHROME_USER_DATA_DIR, SOURCE_PROFILE_FOR_COPY)
+                    target_profile_path = TEMP_PROFILE_DIR
+                    
+                    print(f"[ЛОГ] Будет создан профиль парсера с данными из '{SOURCE_PROFILE_FOR_COPY}'")
+                    
+                    # Копируем данные из Profile 4
+                    if os.path.exists(source_profile_path):
+                        copy_profile_data(source_profile_path, target_profile_path)
+                    else:
+                        print(f"[!] Профиль '{SOURCE_PROFILE_FOR_COPY}' не найден, запускаю без копирования")
                 
-                print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
-                print(f"[ЛОГ] ВАЖНО: Войдите в аккаунты WB в открывшемся браузере!")
+                if USE_TEMP_PROFILE:
+                    print(f"[ЛОГ] Запуск Chrome с профилем: {TEMP_PROFILE_DIR}...")
+                    driver = uc.Chrome(
+                        user_data_dir=TEMP_PROFILE_DIR,
+                        headless=False,
+                        use_subprocess=False,
+                        version_main=143
+                    )
+                    print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
+                else:
+                    print(f"[ЛОГ] Запуск Chrome БЕЗ профиля (временный)...")
+                    driver = uc.Chrome(
+                        headless=False,
+                        use_subprocess=False,
+                        version_main=143
+                    )
+                    print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
             
             print(f"[ЛОГ] ✓ WebDriver создан успешно")
             print(f"[ЛОГ] Session ID: {driver.session_id}")
@@ -414,11 +524,15 @@ def get_price_from_product_page(driver, product_url, article):
     Возвращает цену или 0 если товара нет в наличии
     """
     try:
-        print(f"\n[{article}] Открываю карточку...")
+        print(f"\n[{article}] Открываю карточку в новой вкладке...")
         print(f"  URL: {product_url}")
         
-        # Открываем карточку товара напрямую
-        driver.get(product_url)
+        # Открываем в новой вкладке того же окна
+        driver.execute_script("window.open(arguments[0], '_blank');", product_url)
+        
+        # Переключаемся на новую вкладку
+        driver.switch_to.window(driver.window_handles[-1])
+        
         human_delay(2, 4)
         
         # Проверяем на captcha
@@ -446,11 +560,33 @@ def get_price_from_product_page(driver, product_url, article):
                 break
         
         if is_unavailable:
+            # Закрываем вкладку если товар недоступен
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
             return 0
         
-        # Ищем элемент с ценой (черная цена)
-        # Селектор из black_price_product_page.html: ins.priceBlockFinalPrice--iToZR
+        # НОВАЯ ЛОГИКА: Сначала кликаем на кнопку кошелька (если есть)
+        # Это открывает финальную цену с учетом всех скидок
+        try:
+            # Ищем кнопку с кошельком (класс priceBlockWalletPrice)
+            wallet_button = WebDriverWait(driver, 3).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[class*='priceBlockWalletPrice']"))
+            )
+            print(f"  ⚠ Найдена кнопка кошелька, кликаю...")
+            wallet_button.click()
+            human_delay(1, 2)  # Ждем появления финальной цены
+        except:
+            # Кнопки кошелька нет - это нормально, продолжаем
+            print(f"  ℹ Кнопка кошелька не найдена, ищу обычную цену")
+        
+        # Ищем элемент с финальной ценой
+        # Приоритет 1: h2 с классом mo-typography_color_primary (появляется после клика на кошелек)
+        # Приоритет 2: ins.priceBlockFinalPrice (обычная цена)
         price_selectors = [
+            # Финальная цена после клика на кошелек
+            (By.CSS_SELECTOR, "h2.mo-typography_color_primary"),
+            (By.CSS_SELECTOR, "h2[class*='mo-typography'][class*='color_primary']"),
+            # Обычная цена
             (By.CSS_SELECTOR, "ins.priceBlockFinalPrice--iToZR"),
             (By.CSS_SELECTOR, "ins[class*='priceBlockFinalPrice']"),
             (By.CSS_SELECTOR, "ins.mo-typography[class*='priceBlockFinalPrice']"),
@@ -468,18 +604,25 @@ def get_price_from_product_page(driver, product_url, article):
                     EC.presence_of_element_located((by, selector))
                 )
                 price_text = price_elem.text.strip()
-                # Извлекаем число (убираем все нецифровые символы)
+                # Извлекаем число (убираем все нецифровые символы, включая nbsp)
                 price_num = re.sub(r'[^\d]', '', price_text)
                 if price_num:
                     price = int(price_num)
-                    print(f"  ✓ Цена найдена: {price} ₽")
+                    print(f"  ✓ Цена найдена: {price} ₽ (селектор: {selector})")
                     break
             except:
                 continue
         
         if not price:
             print(f"  ⚠ Цена не найдена - возможно товар недоступен")
+            # Закрываем вкладку перед возвратом
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
             return 0
+        
+        # Закрываем вкладку после успешного парсинга
+        driver.close()
+        driver.switch_to.window(driver.window_handles[0])
         
         return price
     
@@ -488,6 +631,13 @@ def get_price_from_product_page(driver, product_url, article):
         raise  # Пробрасываем дальше для переподключения
     except Exception as e:
         print(f"  ✗ Ошибка: {e}")
+        # Закрываем вкладку в случае ошибки (если она открыта)
+        try:
+            if len(driver.window_handles) > 1:
+                driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+        except:
+            pass
         return 0
 
 
@@ -556,6 +706,50 @@ def main():
             return
         
         print("    ✓ Chrome запущен")
+        
+        # Пауза для ручной авторизации
+        if WAIT_FOR_MANUAL_LOGIN:
+            print(f"\n{'='*80}")
+            print("⏸  ПАУЗА ДЛЯ АВТОРИЗАЦИИ")
+            print(f"{'='*80}")
+            print(f"\n📋 ИНСТРУКЦИЯ:")
+            print(f"   1. В открывшемся Chrome зайдите на сайт WB")
+            print(f"   2. Авторизуйтесь в своем аккаунте")
+            print(f"   3. Установите правильный адрес доставки")
+            print(f"   4. После этого вернитесь сюда и нажмите ENTER")
+            print(f"\n⏱  Таймаут: {MANUAL_LOGIN_TIMEOUT} секунд")
+            print(f"   (или нажмите ENTER когда будете готовы)")
+            print(f"\n{'='*80}\n")
+            
+            try:
+                # Открываем главную WB для авторизации
+                print(f"[ЛОГ] Открываю главную страницу WB для авторизации...")
+                driver.get("https://www.wildberries.ru/")
+                time.sleep(3)
+                
+                # Ждем нажатия Enter от пользователя
+                import threading
+                import sys
+                
+                def wait_for_enter():
+                    input("Нажмите ENTER когда авторизуетесь и установите адрес >>> ")
+                
+                # Запускаем ожидание Enter в отдельном потоке
+                print(f"⏳ Жду вашей авторизации...")
+                wait_thread = threading.Thread(target=wait_for_enter, daemon=True)
+                wait_thread.start()
+                wait_thread.join(timeout=MANUAL_LOGIN_TIMEOUT)
+                
+                if wait_thread.is_alive():
+                    print(f"\n⚠ Таймаут истек! Продолжаю парсинг...")
+                else:
+                    print(f"\n✓ Отлично! Начинаю парсинг...")
+                
+                time.sleep(2)
+                
+            except Exception as e:
+                print(f"\n[!] Ошибка при ожидании авторизации: {e}")
+                print(f"    Продолжаю парсинг...")
         
         # Парсим товары
         print(f"\n[3/3] Парсинг цен...")
