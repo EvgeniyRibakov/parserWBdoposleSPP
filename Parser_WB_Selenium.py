@@ -14,6 +14,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from openpyxl import load_workbook
 from datetime import datetime
 import re
@@ -25,7 +27,7 @@ SHEET_OUTPUT = "Парсер ВБ"
 
 # Пути к Chrome
 CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-CHROME_PROFILE_NAME = "Profile 2"
+CHROME_PROFILE_NAME = "Profile 4"
 
 
 def setup_chrome_driver():
@@ -45,8 +47,9 @@ def setup_chrome_driver():
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # Создаём драйвер
-    driver = webdriver.Chrome(options=chrome_options)
+    # Создаём драйвер с автоматической установкой ChromeDriver
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
     
     # Скрываем webdriver
     driver.execute_cdp_cmd('Network.setUserAgentOverride', {

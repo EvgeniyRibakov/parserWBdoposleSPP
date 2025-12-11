@@ -5,15 +5,20 @@
 Сохраняет результаты в текстовый файл: ссылка, артикул, цена
 
 ИНСТРУКЦИЯ:
-1. Убедитесь что Chrome закрыт (или используйте remote режим)
-2. Запустите: python Parser_WB_Search.py
-3. Артикулы читаются из листа "Данные для парсера ВБ" в Excel
-4. Результаты сохраняются в prices.txt
+1. Сначала запустите: python Create_Links_Excel.py (создаст файл со ссылками)
+2. Убедитесь что Chrome закрыт (или используйте remote режим)
+3. Запустите: python Parser_WB_Search.py
+4. Парсер читает ссылки из файла links_to_products.xlsx
+5. Результаты сохраняются в prices_results.xlsx
 
 РЕЖИМЫ РАБОТЫ:
-- Обычный режим (USE_REMOTE_CHROME = False): запускает Chrome с вашим профилем
-- Remote режим (USE_REMOTE_CHROME = True): подключается к уже запущенному Chrome
+- Обычный режим (USE_REMOTE_CHROME = False): запускает браузер с вашим профилем
+- Remote режим (USE_REMOTE_CHROME = True): подключается к уже запущенному браузеру
   Для remote режима сначала запустите START_CHROME_DEBUG.bat
+
+ВЫБОР БРАУЗЕРА:
+- Chrome (BROWSER_TYPE = 'chrome') - по умолчанию
+- Edge (BROWSER_TYPE = 'edge') - может работать стабильнее с профилями
 """
 
 import os
@@ -22,42 +27,87 @@ import random
 import re
 import subprocess
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.edge.service import Service as EdgeService
+from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 from openpyxl import load_workbook, Workbook
 from selenium.common.exceptions import InvalidSessionIdException
 import requests
+import undetected_chromedriver as uc
 
 # Конфигурация
-EXCEL_FILE = "Парсер цен.xlsx"
-SHEET_INPUT = "Данные для парсера ВБ"
+LINKS_EXCEL_FILE = "links_to_products.xlsx"
+SHEET_LINKS = "Ссылки на товары"
 OUTPUT_EXCEL_FILE = "prices_results.xlsx"
 
 # Пути к Chrome
 CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-CHROME_PROFILE_NAME = "Profile 4"
+CHROME_PROFILE_NAME = "Default"  # ИЗМЕНЕНО: Profile 4 не запускается через Selenium, используем Default
 
-# Использовать remote Chrome (если запущен через START_CHROME_DEBUG.bat)
+# Пути к Edge
+EDGE_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
+EDGE_PROFILE_NAME = "Default"  # "Default" для первого профиля (Пользователь 1), или "Profile 1", "Profile 2" и т.д.
+
+# Использовать remote Chrome/Edge (если запущен через START_EDGE_DEBUG.bat или START_CHROME_DEBUG.bat)
 USE_REMOTE_CHROME = False
 CHROME_DEBUG_PORT = 9222
 
 # Использовать временный профиль для парсинга (избегает конфликтов с запущенным Chrome)
 USE_TEMP_PROFILE = False
-TEMP_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_temp_profile")
+TEMP_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_temp_profile_copy")
+
+# Выбор браузера: 'chrome' или 'edge'
+BROWSER_TYPE = 'chrome'  # 'chrome' или 'edge'
 
 
 def check_chrome_running():
     """Проверяет, запущен ли Chrome"""
     try:
+        print(f"[ЛОГ] Проверка запущенных процессов Chrome...")
         result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq chrome.exe'], 
                               capture_output=True, text=True, timeout=5)
-        return 'chrome.exe' in result.stdout
-    except:
+        is_running = 'chrome.exe' in result.stdout
+        if is_running:
+            print(f"[ЛОГ] Chrome процессы найдены:")
+            # Подсчитываем количество процессов
+            lines = [line for line in result.stdout.split('\n') if 'chrome.exe' in line]
+            print(f"[ЛОГ]   Найдено процессов: {len(lines)}")
+            for line in lines[:5]:  # Показываем первые 5
+                print(f"[ЛОГ]   {line.strip()}")
+        else:
+            print(f"[ЛОГ] Chrome процессы не найдены")
+        return is_running
+    except Exception as e:
+        print(f"[ЛОГ] Ошибка проверки Chrome процессов: {e}")
+        return False
+
+
+def check_edge_running():
+    """Проверяет, запущен ли Edge"""
+    try:
+        print(f"[ЛОГ] Проверка запущенных процессов Edge...")
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq msedge.exe'], 
+                              capture_output=True, text=True, timeout=5)
+        is_running = 'msedge.exe' in result.stdout
+        if is_running:
+            print(f"[ЛОГ] Edge процессы найдены:")
+            # Подсчитываем количество процессов
+            lines = [line for line in result.stdout.split('\n') if 'msedge.exe' in line]
+            print(f"[ЛОГ]   Найдено процессов: {len(lines)}")
+            for line in lines[:5]:  # Показываем первые 5
+                print(f"[ЛОГ]   {line.strip()}")
+        else:
+            print(f"[ЛОГ] Edge процессы не найдены")
+        return is_running
+    except Exception as e:
+        print(f"[ЛОГ] Ошибка проверки Edge процессов: {e}")
         return False
 
 
@@ -65,9 +115,15 @@ def check_remote_chrome_available():
     """Проверяет, доступен ли Chrome в remote режиме"""
     try:
         import requests
-        response = requests.get(f"http://127.0.0.1:{CHROME_DEBUG_PORT}/json", timeout=2)
+        url = f"http://127.0.0.1:{CHROME_DEBUG_PORT}/json"
+        print(f"[ЛОГ] Проверка remote Chrome: {url}")
+        response = requests.get(url, timeout=2)
+        print(f"[ЛОГ] Ответ: статус {response.status_code}")
+        if response.status_code == 200:
+            print(f"[ЛОГ] Remote Chrome доступен")
         return response.status_code == 200
-    except:
+    except Exception as e:
+        print(f"[ЛОГ] Remote Chrome недоступен: {e}")
         return False
 
 
@@ -81,138 +137,268 @@ def cleanup_profile_locks(profile_path):
     ]
     
     cleaned = False
+    print(f"[ЛОГ] Очистка lock-файлов в: {profile_path}")
+    
     for lock_file in lock_files:
         lock_path = os.path.join(profile_path, lock_file)
         if os.path.exists(lock_path):
             try:
+                file_size = os.path.getsize(lock_path)
+                print(f"[ЛОГ]   Удаляю: {lock_file} (размер: {file_size} байт)")
                 os.remove(lock_path)
                 cleaned = True
-            except:
-                pass
+                print(f"[ЛОГ]   ✓ Удалено успешно")
+            except Exception as e:
+                print(f"[ЛОГ]   ✗ Ошибка удаления {lock_file}: {e}")
+        else:
+            print(f"[ЛОГ]   {lock_file} не найден")
     
     # Также очищаем DevToolsActivePort если есть
     devtools_port = os.path.join(profile_path, "DevToolsActivePort")
     if os.path.exists(devtools_port):
         try:
+            file_size = os.path.getsize(devtools_port)
+            print(f"[ЛОГ]   Удаляю: DevToolsActivePort (размер: {file_size} байт)")
             os.remove(devtools_port)
             cleaned = True
-        except:
-            pass
+            print(f"[ЛОГ]   ✓ Удалено успешно")
+        except Exception as e:
+            print(f"[ЛОГ]   ✗ Ошибка удаления DevToolsActivePort: {e}")
+    else:
+        print(f"[ЛОГ]   DevToolsActivePort не найден")
     
+    print(f"[ЛОГ] Результат очистки: {'очищено' if cleaned else 'нечего очищать'}")
     return cleaned
 
 
-def setup_chrome_driver():
+def setup_browser_driver():
     """
-    Настраивает Chrome драйвер
+    Настраивает браузер (Chrome или Edge)
     Автоматически определяет режим работы
     """
-    chrome_options = Options()
+    print(f"\n{'='*60}")
+    print(f"[ДИАГНОСТИКА] Настройка браузера {BROWSER_TYPE.upper()}")
+    print(f"{'='*60}")
     
     # Автоматическое определение режима
     auto_remote = False
     if not USE_REMOTE_CHROME:
+        print(f"[ЛОГ] USE_REMOTE_CHROME = {USE_REMOTE_CHROME}")
         # Проверяем, доступен ли remote Chrome
+        print(f"[ЛОГ] Проверка доступности remote Chrome на порту {CHROME_DEBUG_PORT}...")
         if check_remote_chrome_available():
             print(f"    [Авто] Обнаружен Chrome в remote режиме, переключаюсь...")
             auto_remote = True
+        else:
+            print(f"[ЛОГ] Remote Chrome недоступен")
     
     if USE_REMOTE_CHROME or auto_remote:
-        # Подключение к уже запущенному Chrome
-        chrome_options.add_experimental_option("debuggerAddress", f"127.0.0.1:{CHROME_DEBUG_PORT}")
-        print(f"    [Режим] Подключение к Chrome (port {CHROME_DEBUG_PORT})")
+        # Подключение к уже запущенному браузеру
+        print(f"[ЛОГ] Режим: Remote подключение")
+        if BROWSER_TYPE == 'edge':
+            options = EdgeOptions()
+        else:
+            options = ChromeOptions()
+        
+        options.add_experimental_option("debuggerAddress", f"127.0.0.1:{CHROME_DEBUG_PORT}")
+        print(f"    [Режим] Подключение к {BROWSER_TYPE.upper()} (port {CHROME_DEBUG_PORT})")
         
         try:
-            driver = webdriver.Chrome(options=chrome_options)
+            if BROWSER_TYPE == 'edge':
+                driver = webdriver.Edge(options=options)
+            else:
+                driver = webdriver.Chrome(options=options)
             return driver
         except Exception as e:
-            print(f"\n[!] ОШИБКА подключения к Chrome: {e}")
-            print(f"\n💡 Убедись что Chrome запущен через START_CHROME_DEBUG.bat")
+            print(f"\n[!] ОШИБКА подключения к {BROWSER_TYPE.upper()}: {e}")
+            print(f"\n💡 Убедись что браузер запущен через START_CHROME_DEBUG.bat")
             return None
     else:
         # Используем профиль пользователя
-        profile_path = os.path.join(CHROME_USER_DATA_DIR, CHROME_PROFILE_NAME)
+        print(f"[ЛОГ] Режим: Прямой запуск браузера")
         
-        # Проверяем, запущен ли Chrome
-        if check_chrome_running():
-            print(f"    ⚠ Chrome уже запущен!")
-            print(f"    [Авто] Пытаюсь очистить lock-файлы профиля...")
+        if BROWSER_TYPE == 'edge':
+            # Edge использует другой путь к профилям
+            profile_path = os.path.join(EDGE_USER_DATA_DIR, EDGE_PROFILE_NAME)
+            options = EdgeOptions()
             
-            # Автоматически очищаем lock-файлы
-            cleaned = cleanup_profile_locks(profile_path)
-            if cleaned:
-                print(f"    ✓ Lock-файлы очищены, пробую запустить...")
-                time.sleep(1)  # Небольшая пауза после очистки
+            print(f"[ЛОГ] Edge User Data Dir: {EDGE_USER_DATA_DIR}")
+            print(f"[ЛОГ] Edge Profile Name: {EDGE_PROFILE_NAME}")
+            print(f"[ЛОГ] Полный путь к профилю: {profile_path}")
+            print(f"[ЛОГ] User Data Dir существует: {os.path.exists(EDGE_USER_DATA_DIR)}")
+            print(f"[ЛОГ] Профиль существует: {os.path.exists(profile_path)}")
+            
+            # Проверяем, запущен ли Edge
+            edge_running = check_edge_running()
+            print(f"[ЛОГ] Edge запущен: {edge_running}")
+            
+            if edge_running:
+                print(f"    ⚠ Edge уже запущен!")
+                print(f"    [Авто] Пытаюсь очистить lock-файлы профиля...")
+                
+                # Автоматически очищаем lock-файлы
+                cleaned = cleanup_profile_locks(profile_path)
+                if cleaned:
+                    print(f"    ✓ Lock-файлы очищены, пробую запустить...")
+                    time.sleep(1)
+                else:
+                    print(f"    ⚠ Lock-файлы не найдены")
             else:
-                print(f"    ⚠ Lock-файлы не найдены")
-                print(f"    💡 Рекомендуется закрыть все окна Chrome перед запуском")
-        else:
-            # Даже если Chrome не запущен, очищаем старые lock-файлы на всякий случай
-            cleanup_profile_locks(profile_path)
-        
-        chrome_options.add_argument(f"--user-data-dir={CHROME_USER_DATA_DIR}")
-        chrome_options.add_argument(f"--profile-directory={CHROME_PROFILE_NAME}")
-        print(f"    [Режим] Запуск Chrome с профилем '{CHROME_PROFILE_NAME}'")
-    
-    # Дополнительные опции для стабильности
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # Используем ChromeDriverManager для автоматической установки драйвера
-    print(f"    [ChromeDriver] Установка/проверка драйвера...")
-    try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        # Скрываем webdriver
-        driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-            "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
-        })
-        
-        return driver
-    except Exception as e:
-        error_msg = str(e).lower()
-        
-        # Если ошибка связана с lock-файлами или DevToolsActivePort
-        if "devtoolsactiveport" in error_msg or "session not created" in error_msg:
-            print(f"\n[!] ОШИБКА: Конфликт с профилем Chrome")
-            print(f"    [Авто] Пытаюсь очистить lock-файлы и перезапустить...")
+                # Очищаем старые lock-файлы на всякий случай
+                print(f"[ЛОГ] Очистка lock-файлов профиля...")
+                cleanup_profile_locks(profile_path)
             
-            # Очищаем lock-файлы ещё раз
+            options.add_argument(f"--user-data-dir={EDGE_USER_DATA_DIR}")
+            options.add_argument(f"--profile-directory={EDGE_PROFILE_NAME}")
+            print(f"    [Режим] Запуск Edge с профилем '{EDGE_PROFILE_NAME}'")
+        else:
+            # Chrome
             profile_path = os.path.join(CHROME_USER_DATA_DIR, CHROME_PROFILE_NAME)
-            cleanup_profile_locks(profile_path)
-            time.sleep(2)
+            options = ChromeOptions()
             
-            # Пробуем ещё раз
-            try:
-                service = Service(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=chrome_options)
+            print(f"[ЛОГ] Chrome User Data Dir: {CHROME_USER_DATA_DIR}")
+            print(f"[ЛОГ] Chrome Profile Name: {CHROME_PROFILE_NAME}")
+            print(f"[ЛОГ] Полный путь к профилю: {profile_path}")
+            print(f"[ЛОГ] User Data Dir существует: {os.path.exists(CHROME_USER_DATA_DIR)}")
+            print(f"[ЛОГ] Профиль существует: {os.path.exists(profile_path)}")
+            
+            # Проверяем наличие Chrome.exe
+            chrome_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe")
+            ]
+            chrome_found = False
+            chrome_exe_path = None
+            for path in chrome_paths:
+                if os.path.exists(path):
+                    chrome_found = True
+                    chrome_exe_path = path
+                    print(f"[ЛОГ] Chrome.exe найден: {path}")
+                    break
+            
+            if not chrome_found:
+                print(f"[ЛОГ] ⚠ Chrome.exe не найден в стандартных путях!")
+                print(f"[ЛОГ] Проверенные пути:")
+                for path in chrome_paths:
+                    print(f"[ЛОГ]   - {path}")
+            else:
+                # НЕ устанавливаем binary_location - пусть Selenium найдет сам
+                print(f"[ЛОГ] Chrome найден: {chrome_exe_path}")
+            
+            # Проверяем, запущен ли Chrome
+            chrome_running = check_chrome_running()
+            print(f"[ЛОГ] Chrome запущен (по tasklist): {chrome_running}")
+            
+            # Проверяем lock-файлы до очистки
+            lock_files_before = []
+            lock_files_to_check = ["SingletonLock", "lockfile", "SingletonSocket", "SingletonCookie", "DevToolsActivePort"]
+            for lock_file in lock_files_to_check:
+                lock_path = os.path.join(profile_path, lock_file)
+                if os.path.exists(lock_path):
+                    lock_files_before.append(lock_file)
+                    print(f"[ЛОГ] Найден lock-файл: {lock_file} ({lock_path})")
+            
+            if chrome_running:
+                print(f"    ⚠ Chrome уже запущен!")
+                print(f"    [Авто] Пытаюсь очистить lock-файлы профиля...")
                 
-                driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-                    "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
-                })
+                # Автоматически очищаем lock-файлы
+                cleaned = cleanup_profile_locks(profile_path)
+                if cleaned:
+                    print(f"    ✓ Lock-файлы очищены, пробую запустить...")
+                    time.sleep(1)
+                else:
+                    print(f"    ⚠ Lock-файлы не найдены")
+            else:
+                # Очищаем старые lock-файлы на всякий случай
+                print(f"[ЛОГ] Очистка lock-файлов профиля...")
+                cleanup_profile_locks(profile_path)
+            
+            options.add_argument(f"--user-data-dir={CHROME_USER_DATA_DIR}")
+            options.add_argument(f"--profile-directory={CHROME_PROFILE_NAME}")
+            print(f"    [Режим] Запуск Chrome с профилем '{CHROME_PROFILE_NAME}'")
+        
+        # Дополнительные опции для стабильности
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--remote-debugging-port=9223")
+        # КРИТИЧНО: отключаем расширения - они блокируют запуск через Selenium
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-popup-blocking")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        # Логируем все аргументы
+        print(f"[ЛОГ] Аргументы командной строки Chrome:")
+        for arg in options.arguments:
+            print(f"[ЛОГ]   - {arg}")
+        
+        # Логируем experimental options
+        print(f"[ЛОГ] Experimental options:")
+        for key, value in options.experimental_options.items():
+            print(f"[ЛОГ]   - {key}: {value}")
+        
+        # Устанавливаем драйвер - ОДНА ПОПЫТКА
+        print(f"\n[{BROWSER_TYPE.upper()}Driver] Установка/проверка драйвера...")
+        print(f"[ЛОГ] Инициализация {BROWSER_TYPE}DriverManager...")
+        
+        try:
+            if BROWSER_TYPE == 'edge':
+                driver_path = EdgeChromiumDriverManager().install()
+                print(f"[ЛОГ] EdgeDriver путь: {driver_path}")
+                service = EdgeService(driver_path)
+                print(f"[ЛОГ] Создание Edge WebDriver...")
+                driver = webdriver.Edge(service=service, options=options)
+            else:
+                print(f"[ЛОГ] Используем UNDETECTED CHROMEDRIVER...")
+                print(f"[ЛОГ] Запуск Chrome БЕЗ профиля (временный профиль)...")
                 
-                print(f"    ✓ Успешно запущено после очистки!")
-                return driver
-            except Exception as e2:
-                print(f"\n[!] Повторная попытка не удалась: {e2}")
-                print(f"\n💡 Решения:")
-                print(f"   1. Закройте ВСЕ окна Chrome (включая фоновые процессы)")
-                print(f"   2. Подождите 5 секунд и запустите снова")
-                print(f"   3. Или используйте remote режим:")
-                print(f"      - Запустите START_CHROME_DEBUG.bat")
-                print(f"      - Установите USE_REMOTE_CHROME = True в коде")
-                return None
-        else:
-            print(f"\n[!] ОШИБКА запуска Chrome: {e}")
-            print(f"\n💡 Решения:")
-            print(f"   1. Закрыть все окна Chrome и запустить снова")
-            print(f"   2. Использовать remote режим:")
-            print(f"      - Запустите START_CHROME_DEBUG.bat")
-            print(f"      - Установите USE_REMOTE_CHROME = True в коде")
+                # Запускаем без профиля - создастся временный
+                driver = uc.Chrome(
+                    headless=False,
+                    use_subprocess=False,
+                    version_main=143  # Версия Chrome
+                )
+                
+                print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
+                print(f"[ЛОГ] ВАЖНО: Войдите в аккаунты WB в открывшемся браузере!")
+            
+            print(f"[ЛОГ] ✓ WebDriver создан успешно")
+            print(f"[ЛОГ] Session ID: {driver.session_id}")
+            print(f"[ЛОГ] Capabilities: {driver.capabilities}")
+            
+            # Скрываем webdriver
+            driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+                "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
+            })
+            
+            return driver
+            
+        except Exception as e:
+            import traceback
+            print(f"\n{'='*60}")
+            print(f"[ОШИБКА] Детальная информация")
+            print(f"{'='*60}")
+            print(f"[ЛОГ] Тип: {type(e).__name__}")
+            print(f"[ЛОГ] Сообщение: {str(e)}")
+            print(f"\n[ЛОГ] Полный traceback:")
+            traceback.print_exc()
+            print(f"{'='*60}\n")
+            
+            print(f"\n💡 ВОЗМОЖНЫЕ ПРИЧИНЫ:")
+            print(f"   1. Профиль '{CHROME_PROFILE_NAME}' используется другим процессом Chrome")
+            print(f"   2. Профиль поврежден или имеет проблемы с правами доступа")
+            print(f"   3. Несовместимость версий Chrome ({chrome_exe_path if BROWSER_TYPE == 'chrome' else 'Edge'}) и ChromeDriver")
+            print(f"   4. Антивирус блокирует запуск Chrome через Selenium")
+            print(f"\n💡 РЕШЕНИЯ:")
+            print(f"   1. Закройте ВСЕ окна Chrome: taskkill /F /IM chrome.exe")
+            print(f"   2. Попробуйте другой профиль (измените CHROME_PROFILE_NAME)")
+            print(f"   3. Используйте Edge: BROWSER_TYPE = 'edge'")
             return None
 
 
@@ -222,16 +408,14 @@ def human_delay(min_sec=1, max_sec=3):
     time.sleep(delay)
 
 
-def get_price_from_product_page(driver, article):
+def get_price_from_product_page(driver, product_url, article):
     """
-    Открывает карточку товара и извлекает цену
+    Открывает карточку товара по ссылке и извлекает цену
     Возвращает цену или 0 если товара нет в наличии
     """
-    # Формируем URL карточки товара
-    product_url = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
-    
     try:
         print(f"\n[{article}] Открываю карточку...")
+        print(f"  URL: {product_url}")
         
         # Открываем карточку товара напрямую
         driver.get(product_url)
@@ -329,26 +513,31 @@ def main():
     
     print(f"\n✓ Конфигурация проверена")
     
-    # Загружаем Excel
+    # Загружаем Excel со ссылками
     try:
-        wb = load_workbook(EXCEL_FILE)
+        wb = load_workbook(LINKS_EXCEL_FILE)
     except Exception as e:
         print(f"\n[!] ОШИБКА открытия Excel: {e}")
-        print(f"    Убедись что файл '{EXCEL_FILE}' закрыт!")
+        print(f"    Убедись что файл '{LINKS_EXCEL_FILE}' закрыт!")
+        print(f"    Сначала запусти Create_Links_Excel.py для создания файла со ссылками")
         return
     
-    ws_in = wb[SHEET_INPUT]
+    ws_in = wb[SHEET_LINKS]
     
-    # Загружаем артикулы
-    articles = []
-    for row in ws_in.iter_rows(min_row=2, max_col=1, values_only=True):
-        if row[0]:
-            articles.append(str(row[0]).strip())
+    # Загружаем ссылки и артикулы
+    products = []
+    for row in ws_in.iter_rows(min_row=2, max_col=2, values_only=True):
+        if row[0] and row[1]:  # ссылка и артикул
+            products.append({
+                'url': str(row[0]).strip(),
+                'article': str(row[1]).strip()
+            })
     
-    print(f"\n[1/3] Найдено артикулов: {len(articles)}")
+    print(f"\n[1/3] Найдено товаров: {len(products)}")
     
-    if len(articles) == 0:
-        print("[!] Нет артикулов для обработки!")
+    if len(products) == 0:
+        print("[!] Нет товаров для обработки!")
+        print(f"    Сначала запусти Create_Links_Excel.py для создания файла со ссылками")
         wb.close()
         return
     
@@ -357,7 +546,7 @@ def main():
     
     driver = None
     try:
-        driver = setup_chrome_driver()
+        driver = setup_browser_driver()
         
         if not driver:
             print("\n[!] Не удалось запустить Chrome!")
@@ -374,19 +563,17 @@ def main():
         
         results = []
         
-        for i, article in enumerate(articles, 1):
+        for i, product in enumerate(products, 1):
             print(f"\n{'='*60}")
-            print(f"[{i}/{len(articles)}] Артикул: {article}")
-            
-            product_url = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
+            print(f"[{i}/{len(products)}] Артикул: {product['article']}")
             
             try:
-                price = get_price_from_product_page(driver, article)
+                price = get_price_from_product_page(driver, product['url'], product['article'])
                 
                 # Сохраняем результат (даже если цена 0)
                 results.append({
-                    'url': product_url,
-                    'article': article,
+                    'url': product['url'],
+                    'article': product['article'],
                     'price': price if price is not None else 0
                 })
                 
@@ -405,17 +592,17 @@ def main():
                 except:
                     pass
                 # Переподключаемся
-                driver = setup_chrome_driver()
+                driver = setup_browser_driver()
                 if not driver:
                     print(f"  ✗ Не удалось переподключиться!")
                     break
                 print(f"  ✓ Переподключено")
                 # Пробуем ещё раз
                 try:
-                    price = get_price_from_product_page(driver, article)
+                    price = get_price_from_product_page(driver, product['url'], product['article'])
                     results.append({
-                        'url': product_url,
-                        'article': article,
+                        'url': product['url'],
+                        'article': product['article'],
                         'price': price if price is not None else 0
                     })
                     if price and price > 0:
@@ -424,14 +611,14 @@ def main():
                         print(f"  ✓ Товар недоступен: цена = 0")
                 except:
                     results.append({
-                        'url': product_url,
-                        'article': article,
+                        'url': product['url'],
+                        'article': product['article'],
                         'price': 0
                     })
                     print(f"  ✗ Ошибка при повторной попытке")
             
             # Задержка между товарами
-            if i < len(articles):
+            if i < len(products):
                 delay = random.uniform(2, 5)
                 print(f"\n  [пауза {delay:.1f}с перед следующим товаром]")
                 time.sleep(delay)
