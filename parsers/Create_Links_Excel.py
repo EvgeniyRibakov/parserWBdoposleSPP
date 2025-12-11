@@ -4,12 +4,17 @@
 Читает артикулы из Excel и создаёт новый файл со ссылками
 """
 
+import os
 from openpyxl import load_workbook, Workbook
 
 # Конфигурация
-EXCEL_FILE = "Парсер цен.xlsx"
+# Пути относительно корня проекта
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+
+EXCEL_FILE = os.path.join(DATA_DIR, "Парсер цен.xlsx")
 SHEET_INPUT = "Данные для парсера ВБ"
-OUTPUT_EXCEL_FILE = "links_to_products.xlsx"
+OUTPUT_EXCEL_FILE = os.path.join(DATA_DIR, "links_to_products.xlsx")
 SHEET_LINKS = "Ссылки на товары"
 
 def main():

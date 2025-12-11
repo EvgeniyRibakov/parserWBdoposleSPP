@@ -13,7 +13,11 @@ from dotenv import load_dotenv
 import time
 
 # === КОНФИГУРАЦИЯ ===
-EXCEL_FILE = "Парсер цен.xlsx"
+# Пути относительно корня проекта
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+
+EXCEL_FILE = os.path.join(DATA_DIR, "Парсер цен.xlsx")
 SHEET_OUTPUT_WB = "Парсер ВБ"
 
 # API ENDPOINTS

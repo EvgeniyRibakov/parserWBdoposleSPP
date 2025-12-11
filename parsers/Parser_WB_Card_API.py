@@ -4,6 +4,7 @@
 Получает цены напрямую с карточек товаров через внутренний JSON API
 """
 
+import os
 import requests
 import json
 import time
@@ -11,7 +12,11 @@ from openpyxl import load_workbook
 from datetime import datetime
 
 # Конфигурация
-EXCEL_FILE = "Парсер цен.xlsx"
+# Пути относительно корня проекта
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+
+EXCEL_FILE = os.path.join(DATA_DIR, "Парсер цен.xlsx")
 SHEET_INPUT = "Данные для парсера ВБ"
 SHEET_OUTPUT = "Результаты парсинга ВБ"
 

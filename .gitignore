@@ -1,10 +1,12 @@
 # Секретные данные
 .env
 
-# Excel файлы с данными
-Парсер цен.xlsx
-~$*.xlsx
-prices_results.xlsx
+# Excel файлы с данными (результаты парсинга)
+data/prices_results.xlsx
+data/Парсер цен.xlsx
+data/~$*.xlsx
+# Но разрешаем шаблоны и примеры
+!data/links_to_products.xlsx
 
 # Chrome профили (кеши, cookies, личные данные) - ОГРОМНЫЕ ФАЙЛЫ!
 chrome_parser_profile/

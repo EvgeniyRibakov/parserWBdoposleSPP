@@ -17,7 +17,12 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 # === КОНФИГУРАЦИЯ ===
-EXCEL_FILE = "Парсер цен.xlsx"
+# Пути относительно корня проекта
+import os
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+
+EXCEL_FILE = os.path.join(DATA_DIR, "Парсер цен.xlsx")
 SHEET_INPUT_WB = "Данные для парсера ВБ"
 SHEET_OUTPUT_WB = "Парсер ВБ"
 SHEET_SETTINGS = "Настройка"

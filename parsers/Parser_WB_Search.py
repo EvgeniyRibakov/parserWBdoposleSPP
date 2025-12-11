@@ -44,9 +44,13 @@ import requests
 import undetected_chromedriver as uc
 
 # Конфигурация
-LINKS_EXCEL_FILE = "links_to_products.xlsx"
+# Пути относительно корня проекта
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+
+LINKS_EXCEL_FILE = os.path.join(DATA_DIR, "links_to_products.xlsx")
 SHEET_LINKS = "Ссылки на товары"
-OUTPUT_EXCEL_FILE = "prices_results.xlsx"
+OUTPUT_EXCEL_FILE = os.path.join(DATA_DIR, "prices_results.xlsx")
 
 # Пути к Chrome
 CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
@@ -62,7 +66,7 @@ CHROME_DEBUG_PORT = 9222
 
 # Использовать временный профиль для парсинга (избегает конфликтов с запущенным Chrome)
 USE_TEMP_PROFILE = True
-TEMP_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_parser_profile")
+TEMP_PROFILE_DIR = os.path.join(PROJECT_ROOT, "chrome_parser_profile")
 
 # Копировать данные из Profile 4 в рабочий профиль
 COPY_PROFILE_DATA = True
