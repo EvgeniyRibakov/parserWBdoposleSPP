@@ -4,6 +4,22 @@
 # Excel файлы с данными
 Парсер цен.xlsx
 ~$*.xlsx
+prices_results.xlsx
+
+# Chrome профили (кеши, cookies, личные данные) - ОГРОМНЫЕ ФАЙЛЫ!
+chrome_parser_profile/
+chrome_temp_profile/
+**/Cache/
+**/Cache_Data/
+**/Code Cache/
+
+# Временные файлы
+*.tmp
+*.log
+
+# Старые батники (не используются)
+START_CHROME_DEBUG.bat
+START_EDGE_DEBUG.bat
 
 # Python
 __pycache__/
