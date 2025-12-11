@@ -1,0 +1,489 @@
+# -*- coding: utf-8 -*-
+"""
+ПАРСЕР ЦЕН WILDBERRIES - ПРОСТОЙ ПАРСЕР ЦЕН
+Открывает карточки товаров напрямую по артикулам и извлекает цену
+Сохраняет результаты в текстовый файл: ссылка, артикул, цена
+
+ИНСТРУКЦИЯ:
+1. Убедитесь что Chrome закрыт (или используйте remote режим)
+2. Запустите: python Parser_WB_Search.py
+3. Артикулы читаются из листа "Данные для парсера ВБ" в Excel
+4. Результаты сохраняются в prices.txt
+
+РЕЖИМЫ РАБОТЫ:
+- Обычный режим (USE_REMOTE_CHROME = False): запускает Chrome с вашим профилем
+- Remote режим (USE_REMOTE_CHROME = True): подключается к уже запущенному Chrome
+  Для remote режима сначала запустите START_CHROME_DEBUG.bat
+"""
+
+import os
+import time
+import random
+import re
+import subprocess
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
+from openpyxl import load_workbook, Workbook
+from selenium.common.exceptions import InvalidSessionIdException
+import requests
+
+# Конфигурация
+EXCEL_FILE = "Парсер цен.xlsx"
+SHEET_INPUT = "Данные для парсера ВБ"
+OUTPUT_EXCEL_FILE = "prices_results.xlsx"
+
+# Пути к Chrome
+CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+CHROME_PROFILE_NAME = "Profile 4"
+
+# Использовать remote Chrome (если запущен через START_CHROME_DEBUG.bat)
+USE_REMOTE_CHROME = False
+CHROME_DEBUG_PORT = 9222
+
+# Использовать временный профиль для парсинга (избегает конфликтов с запущенным Chrome)
+USE_TEMP_PROFILE = False
+TEMP_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_temp_profile")
+
+
+def check_chrome_running():
+    """Проверяет, запущен ли Chrome"""
+    try:
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq chrome.exe'], 
+                              capture_output=True, text=True, timeout=5)
+        return 'chrome.exe' in result.stdout
+    except:
+        return False
+
+
+def check_remote_chrome_available():
+    """Проверяет, доступен ли Chrome в remote режиме"""
+    try:
+        import requests
+        response = requests.get(f"http://127.0.0.1:{CHROME_DEBUG_PORT}/json", timeout=2)
+        return response.status_code == 200
+    except:
+        return False
+
+
+def cleanup_profile_locks(profile_path):
+    """Очищает lock-файлы профиля Chrome"""
+    lock_files = [
+        "SingletonLock",
+        "lockfile",
+        "SingletonSocket",
+        "SingletonCookie"
+    ]
+    
+    cleaned = False
+    for lock_file in lock_files:
+        lock_path = os.path.join(profile_path, lock_file)
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+                cleaned = True
+            except:
+                pass
+    
+    # Также очищаем DevToolsActivePort если есть
+    devtools_port = os.path.join(profile_path, "DevToolsActivePort")
+    if os.path.exists(devtools_port):
+        try:
+            os.remove(devtools_port)
+            cleaned = True
+        except:
+            pass
+    
+    return cleaned
+
+
+def setup_chrome_driver():
+    """
+    Настраивает Chrome драйвер
+    Автоматически определяет режим работы
+    """
+    chrome_options = Options()
+    
+    # Автоматическое определение режима
+    auto_remote = False
+    if not USE_REMOTE_CHROME:
+        # Проверяем, доступен ли remote Chrome
+        if check_remote_chrome_available():
+            print(f"    [Авто] Обнаружен Chrome в remote режиме, переключаюсь...")
+            auto_remote = True
+    
+    if USE_REMOTE_CHROME or auto_remote:
+        # Подключение к уже запущенному Chrome
+        chrome_options.add_experimental_option("debuggerAddress", f"127.0.0.1:{CHROME_DEBUG_PORT}")
+        print(f"    [Режим] Подключение к Chrome (port {CHROME_DEBUG_PORT})")
+        
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            return driver
+        except Exception as e:
+            print(f"\n[!] ОШИБКА подключения к Chrome: {e}")
+            print(f"\n💡 Убедись что Chrome запущен через START_CHROME_DEBUG.bat")
+            return None
+    else:
+        # Используем профиль пользователя
+        profile_path = os.path.join(CHROME_USER_DATA_DIR, CHROME_PROFILE_NAME)
+        
+        # Проверяем, запущен ли Chrome
+        if check_chrome_running():
+            print(f"    ⚠ Chrome уже запущен!")
+            print(f"    [Авто] Пытаюсь очистить lock-файлы профиля...")
+            
+            # Автоматически очищаем lock-файлы
+            cleaned = cleanup_profile_locks(profile_path)
+            if cleaned:
+                print(f"    ✓ Lock-файлы очищены, пробую запустить...")
+                time.sleep(1)  # Небольшая пауза после очистки
+            else:
+                print(f"    ⚠ Lock-файлы не найдены")
+                print(f"    💡 Рекомендуется закрыть все окна Chrome перед запуском")
+        else:
+            # Даже если Chrome не запущен, очищаем старые lock-файлы на всякий случай
+            cleanup_profile_locks(profile_path)
+        
+        chrome_options.add_argument(f"--user-data-dir={CHROME_USER_DATA_DIR}")
+        chrome_options.add_argument(f"--profile-directory={CHROME_PROFILE_NAME}")
+        print(f"    [Режим] Запуск Chrome с профилем '{CHROME_PROFILE_NAME}'")
+    
+    # Дополнительные опции для стабильности
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    # Используем ChromeDriverManager для автоматической установки драйвера
+    print(f"    [ChromeDriver] Установка/проверка драйвера...")
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+        # Скрываем webdriver
+        driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+            "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
+        })
+        
+        return driver
+    except Exception as e:
+        error_msg = str(e).lower()
+        
+        # Если ошибка связана с lock-файлами или DevToolsActivePort
+        if "devtoolsactiveport" in error_msg or "session not created" in error_msg:
+            print(f"\n[!] ОШИБКА: Конфликт с профилем Chrome")
+            print(f"    [Авто] Пытаюсь очистить lock-файлы и перезапустить...")
+            
+            # Очищаем lock-файлы ещё раз
+            profile_path = os.path.join(CHROME_USER_DATA_DIR, CHROME_PROFILE_NAME)
+            cleanup_profile_locks(profile_path)
+            time.sleep(2)
+            
+            # Пробуем ещё раз
+            try:
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                
+                driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+                    "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
+                })
+                
+                print(f"    ✓ Успешно запущено после очистки!")
+                return driver
+            except Exception as e2:
+                print(f"\n[!] Повторная попытка не удалась: {e2}")
+                print(f"\n💡 Решения:")
+                print(f"   1. Закройте ВСЕ окна Chrome (включая фоновые процессы)")
+                print(f"   2. Подождите 5 секунд и запустите снова")
+                print(f"   3. Или используйте remote режим:")
+                print(f"      - Запустите START_CHROME_DEBUG.bat")
+                print(f"      - Установите USE_REMOTE_CHROME = True в коде")
+                return None
+        else:
+            print(f"\n[!] ОШИБКА запуска Chrome: {e}")
+            print(f"\n💡 Решения:")
+            print(f"   1. Закрыть все окна Chrome и запустить снова")
+            print(f"   2. Использовать remote режим:")
+            print(f"      - Запустите START_CHROME_DEBUG.bat")
+            print(f"      - Установите USE_REMOTE_CHROME = True в коде")
+            return None
+
+
+def human_delay(min_sec=1, max_sec=3):
+    """Случайная задержка как у человека"""
+    delay = random.uniform(min_sec, max_sec)
+    time.sleep(delay)
+
+
+def get_price_from_product_page(driver, article):
+    """
+    Открывает карточку товара и извлекает цену
+    Возвращает цену или 0 если товара нет в наличии
+    """
+    # Формируем URL карточки товара
+    product_url = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
+    
+    try:
+        print(f"\n[{article}] Открываю карточку...")
+        
+        # Открываем карточку товара напрямую
+        driver.get(product_url)
+        human_delay(2, 4)
+        
+        # Проверяем на captcha
+        if "Почти готово" in driver.title or "captcha" in driver.page_source.lower():
+            print(f"  ⚠ Captcha! Жду 10 сек...")
+            time.sleep(10)
+            driver.get(product_url)
+            human_delay(2, 4)
+        
+        # Проверяем наличие товара (ищем сообщения о недоступности)
+        page_text = driver.page_source.lower()
+        unavailable_keywords = [
+            'нет в наличии',
+            'товар недоступен',
+            'недоступен для заказа',
+            'закончился',
+            'распродан'
+        ]
+        
+        is_unavailable = False
+        for keyword in unavailable_keywords:
+            if keyword in page_text:
+                is_unavailable = True
+                print(f"  ⚠ Товар недоступен: найдено '{keyword}'")
+                break
+        
+        if is_unavailable:
+            return 0
+        
+        # Ищем элемент с ценой (черная цена)
+        # Селектор из black_price_product_page.html: ins.priceBlockFinalPrice--iToZR
+        price_selectors = [
+            (By.CSS_SELECTOR, "ins.priceBlockFinalPrice--iToZR"),
+            (By.CSS_SELECTOR, "ins[class*='priceBlockFinalPrice']"),
+            (By.CSS_SELECTOR, "ins.mo-typography[class*='priceBlockFinalPrice']"),
+            (By.CSS_SELECTOR, "ins[class*='priceBlockFinalPrice'][class*='mo-typography']"),
+            # Fallback селекторы
+            (By.CSS_SELECTOR, "ins[class*='FinalPrice']"),
+            (By.CSS_SELECTOR, "span[class*='final-price']"),
+            (By.CSS_SELECTOR, "ins[class*='price']"),
+        ]
+        
+        price = None
+        for by, selector in price_selectors:
+            try:
+                price_elem = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((by, selector))
+                )
+                price_text = price_elem.text.strip()
+                # Извлекаем число (убираем все нецифровые символы)
+                price_num = re.sub(r'[^\d]', '', price_text)
+                if price_num:
+                    price = int(price_num)
+                    print(f"  ✓ Цена найдена: {price} ₽")
+                    break
+            except:
+                continue
+        
+        if not price:
+            print(f"  ⚠ Цена не найдена - возможно товар недоступен")
+            return 0
+        
+        return price
+    
+    except InvalidSessionIdException:
+        print(f"  ✗ Сессия Chrome разорвана")
+        raise  # Пробрасываем дальше для переподключения
+    except Exception as e:
+        print(f"  ✗ Ошибка: {e}")
+        return 0
+
+
+def main():
+    print("\n" + "="*80)
+    print("ПАРСЕР ЦЕН WB - ПРОСТОЙ ПАРСЕР")
+    print("="*80)
+    
+    # Проверяем путь к профилю (если не используем remote и не используем временный профиль)
+    if not USE_REMOTE_CHROME and not USE_TEMP_PROFILE:
+        if not os.path.exists(CHROME_USER_DATA_DIR):
+            print(f"\n[!] ОШИБКА: Не найден Chrome User Data: {CHROME_USER_DATA_DIR}")
+            return
+        
+        profile_path = os.path.join(CHROME_USER_DATA_DIR, CHROME_PROFILE_NAME)
+        if not os.path.exists(profile_path):
+            print(f"\n[!] ОШИБКА: Не найден профиль: {profile_path}")
+            print(f"    Доступные профили:")
+            for item in os.listdir(CHROME_USER_DATA_DIR):
+                if item.startswith('Profile') or item == 'Default':
+                    print(f"      - {item}")
+            return
+    
+    print(f"\n✓ Конфигурация проверена")
+    
+    # Загружаем Excel
+    try:
+        wb = load_workbook(EXCEL_FILE)
+    except Exception as e:
+        print(f"\n[!] ОШИБКА открытия Excel: {e}")
+        print(f"    Убедись что файл '{EXCEL_FILE}' закрыт!")
+        return
+    
+    ws_in = wb[SHEET_INPUT]
+    
+    # Загружаем артикулы
+    articles = []
+    for row in ws_in.iter_rows(min_row=2, max_col=1, values_only=True):
+        if row[0]:
+            articles.append(str(row[0]).strip())
+    
+    print(f"\n[1/3] Найдено артикулов: {len(articles)}")
+    
+    if len(articles) == 0:
+        print("[!] Нет артикулов для обработки!")
+        wb.close()
+        return
+    
+    # Запускаем Chrome
+    print(f"\n[2/3] Запуск Chrome...")
+    
+    driver = None
+    try:
+        driver = setup_chrome_driver()
+        
+        if not driver:
+            print("\n[!] Не удалось запустить Chrome!")
+            if USE_REMOTE_CHROME:
+                print(f"\n💡 Убедись что Chrome запущен через START_CHROME_DEBUG.bat")
+            wb.close()
+            return
+        
+        print("    ✓ Chrome запущен")
+        
+        # Парсим товары
+        print(f"\n[3/3] Парсинг цен...")
+        print("="*80)
+        
+        results = []
+        
+        for i, article in enumerate(articles, 1):
+            print(f"\n{'='*60}")
+            print(f"[{i}/{len(articles)}] Артикул: {article}")
+            
+            product_url = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
+            
+            try:
+                price = get_price_from_product_page(driver, article)
+                
+                # Сохраняем результат (даже если цена 0)
+                results.append({
+                    'url': product_url,
+                    'article': article,
+                    'price': price if price is not None else 0
+                })
+                
+                if price and price > 0:
+                    print(f"  ✓ УСПЕХ: {price} ₽")
+                elif price == 0:
+                    print(f"  ✓ Товар недоступен: цена = 0")
+                else:
+                    print(f"  ✗ НЕ УДАЛОСЬ")
+            
+            except InvalidSessionIdException:
+                print(f"  ✗ Сессия разорвана, переподключаюсь...")
+                # Закрываем старый драйвер
+                try:
+                    driver.quit()
+                except:
+                    pass
+                # Переподключаемся
+                driver = setup_chrome_driver()
+                if not driver:
+                    print(f"  ✗ Не удалось переподключиться!")
+                    break
+                print(f"  ✓ Переподключено")
+                # Пробуем ещё раз
+                try:
+                    price = get_price_from_product_page(driver, article)
+                    results.append({
+                        'url': product_url,
+                        'article': article,
+                        'price': price if price is not None else 0
+                    })
+                    if price and price > 0:
+                        print(f"  ✓ УСПЕХ: {price} ₽")
+                    elif price == 0:
+                        print(f"  ✓ Товар недоступен: цена = 0")
+                except:
+                    results.append({
+                        'url': product_url,
+                        'article': article,
+                        'price': 0
+                    })
+                    print(f"  ✗ Ошибка при повторной попытке")
+            
+            # Задержка между товарами
+            if i < len(articles):
+                delay = random.uniform(2, 5)
+                print(f"\n  [пауза {delay:.1f}с перед следующим товаром]")
+                time.sleep(delay)
+        
+        # Сохраняем результаты в Excel файл
+        print(f"\n{'='*80}")
+        print("СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
+        print(f"{'='*80}")
+        
+        # Создаём новый Excel файл
+        wb_out = Workbook()
+        ws_out = wb_out.active
+        ws_out.title = "Цены"
+        
+        # Заголовки
+        ws_out.append(["ссылка на товар", "артикул", "цена"])
+        
+        # Данные
+        for result in results:
+            ws_out.append([
+                result['url'],
+                result['article'],
+                result['price']
+            ])
+        
+        # Автофильтр
+        ws_out.auto_filter.ref = ws_out.dimensions
+        
+        # Сохраняем файл
+        wb_out.save(OUTPUT_EXCEL_FILE)
+        wb_out.close()
+        
+        print(f"\n✓ Сохранено: {len(results)} товаров")
+        print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
+        
+    except Exception as e:
+        print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        if driver:
+            print(f"\n[Закрываю Chrome через 5 секунд...]")
+            time.sleep(5)
+            driver.quit()
+        
+        wb.close()
+    
+    print(f"\n{'='*80}")
+    print("ЗАВЕРШЕНО")
+    print(f"{'='*80}\n")
+
+
+if __name__ == "__main__":
+    main()

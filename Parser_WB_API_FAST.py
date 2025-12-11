@@ -7,7 +7,7 @@
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from openpyxl import load_workbook
 from dotenv import load_dotenv
 import time
@@ -20,6 +20,7 @@ SHEET_OUTPUT_WB = "Парсер ВБ"
 # API ENDPOINTS
 WB_PRICES_API_URL = "https://discounts-prices-api.wildberries.ru/api/v2/list/goods/filter"
 WB_CONTENT_API_URL = "https://content-api.wildberries.ru/content/v2/get/cards/list"
+WB_STOCKS_API_URL = "https://seller-analytics-api.wildberries.ru/api/v2/stocks-report/products/products"
 
 # Названия кабинетов (для .env файла)
 CABINET_NAMES = ["COSMO", "MMA", "MAB", "MAU", "DREAMLAB", "BEAUTYLAB"]
@@ -187,6 +188,7 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
         return {}
     
     prices_info = {}
+    debug_done = False  # Флаг для вывода DEBUG только 1 раз
     
     for idx, api_key in enumerate(api_keys_list, 1):
         cabinet_name = cabinet_names[idx-1] if cabinet_names and idx-1 < len(cabinet_names) else f"Кабинет {idx}"
@@ -227,6 +229,8 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
                     elif "listGoods" in data:
                         goods_list = data["listGoods"]
                     
+                    
+                    # Обрабатываем товары
                     for item in goods_list:
                         nm_id = str(item.get("nmID", ""))
                         
@@ -235,17 +239,15 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
                         if sizes and len(sizes) > 0:
                             size_data = sizes[0]
                             
-                            # Цены в рублях (целые числа)
-                            price_original = size_data.get("price", 0)  # Базовая цена
-                            price_discounted = size_data.get("discountedPrice", 0)  # После обычных скидок (ДО СПП)
-                            price_club = size_data.get("clubDiscountedPrice", 0)  # После СПП (финальная)
+                            # Все данные из Prices API
+                            price_original = size_data.get("price", 0)  # price
+                            price_discounted = size_data.get("discountedPrice", 0)  # discountedPrice
+                            price_club = size_data.get("clubDiscountedPrice", 0)  # clubDiscountedPrice
+                            tech_size_name = size_data.get("techSizeName", "")  # techSizeName
                             
-                            # Остатки - пробуем разные поля
-                            stocks = size_data.get("stocks", 0) or size_data.get("wh", 0) or item.get("stocks", 0)
-                            
-                            # Проценты
-                            discount_percent = item.get("discount", 0)  # Обычная скидка
-                            club_discount_percent = item.get("clubDiscount", 0)  # СПП
+                            # Проценты скидок
+                            discount_percent = item.get("discount", 0)  # discount
+                            club_discount_percent = item.get("clubDiscount", 0)  # clubDiscount
                             
                             # Если нет цены после скидок, используем базовую
                             if not price_discounted and price_original:
@@ -257,20 +259,19 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
                             
                             if nm_id:
                                 prices_info[nm_id] = {
-                                    "price_original": float(price_original) if price_original else 0,
-                                    "price_before_spp": float(price_discounted) if price_discounted else 0,
-                                    "price_after_spp": float(price_club) if price_club else 0,
+                                    "price": float(price_original) if price_original else 0,
+                                    "discountedPrice": float(price_discounted) if price_discounted else 0,
+                                    "clubDiscountedPrice": float(price_club) if price_club else 0,
+                                    "techSizeName": tech_size_name,
                                     "discount": float(discount_percent) if discount_percent else 0,
-                                    "spp": float(club_discount_percent) if club_discount_percent else 0,
-                                    "stocks": int(stocks) if stocks else 0
+                                    "clubDiscount": float(club_discount_percent) if club_discount_percent else 0
                                 }
                     
-                    print(f"    Найдено {len(goods_list)} товаров в этом кабинете")
+                    print(f"    Батч {i//batch_size + 1}: загружено цен для {len(goods_list)} товаров")
                 
                 else:
                     print(f"[!] Ошибка Prices API: {response.status_code}")
-                    if response.status_code != 404:
-                        print(f"    {response.text[:200]}")
+                    print(f"    {response.text[:200]}")
                 
                 time.sleep(0.3)
         
@@ -281,6 +282,97 @@ def get_prices_full_info(articles, api_keys_list, cabinet_names=None):
     
     print(f"\n[API] Итого загружено цен для {len(prices_info)} товаров")
     return prices_info
+
+
+def get_stocks_info(api_keys_list, cabinet_names=None, articles=None):
+    """
+    Получает остатки товаров через /api/v2/stocks-report/products/products
+    Возвращает словарь {nmID: {stockCount, minPrice, maxPrice}}
+    """
+    print("\n[API] Загрузка остатков через Stocks API...")
+    
+    if not api_keys_list:
+        print("[!] API ключи не найдены!")
+        return {}
+    
+    stocks_info = {}
+    
+    # Формируем список nmIDs для фильтрации
+    nm_ids = [int(art) for art in articles if str(art).isdigit()] if articles else []
+    
+    for idx, api_key in enumerate(api_keys_list, 1):
+        cabinet_name = cabinet_names[idx-1] if cabinet_names and idx-1 < len(cabinet_names) else f"Кабинет {idx}"
+        print(f"\n[API] {cabinet_name} ({idx}/{len(api_keys_list)})...")
+        
+        try:
+            headers = {
+                "Authorization": api_key,
+                "Content-Type": "application/json"
+            }
+            
+            # Минимальный payload - только nmIDs для фильтрации
+            payload = {}
+            if nm_ids:
+                payload["nmIDs"] = nm_ids[:1000]  # Ограничение 1000
+            
+            response = requests.post(WB_STOCKS_API_URL, headers=headers, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Парсим товары
+                products = []
+                if isinstance(data, list):
+                    products = data
+                elif isinstance(data, dict):
+                    products = data.get("products", []) or data.get("data", [])
+                
+                for product in products:
+                    nm_id = str(product.get("nmID", "") or product.get("nmId", ""))
+                    
+                    if nm_id:
+                        stocks_info[nm_id] = {
+                            "stockCount": product.get("stockCount", 0) or 0,
+                            "minPrice": product.get("minPrice", 0) or 0,
+                            "maxPrice": product.get("maxPrice", 0) or 0
+                        }
+                
+                print(f"    Загружено остатков для {len(products)} товаров")
+            
+            elif response.status_code == 401:
+                print(f"    [!] Ошибка 401: Неверный API ключ")
+            elif response.status_code == 400:
+                error_text = response.text[:500]
+                print(f"[!] Ошибка 400: {error_text}")
+                # Пробуем без фильтра
+                if nm_ids:
+                    print(f"    Пробуем запрос без фильтра nmIDs...")
+                    response2 = requests.post(WB_STOCKS_API_URL, headers=headers, json={}, timeout=60)
+                    if response2.status_code == 200:
+                        data = response2.json()
+                        products = data if isinstance(data, list) else data.get("products", [])
+                        for product in products:
+                            nm_id = str(product.get("nmID", "") or product.get("nmId", ""))
+                            if nm_id:
+                                stocks_info[nm_id] = {
+                                    "stockCount": product.get("stockCount", 0) or 0,
+                                    "minPrice": product.get("minPrice", 0) or 0,
+                                    "maxPrice": product.get("maxPrice", 0) or 0
+                                }
+                        print(f"    Загружено остатков для {len(products)} товаров")
+            else:
+                print(f"[!] Ошибка Stocks API: {response.status_code}")
+                print(f"    {response.text[:300]}")
+            
+            time.sleep(0.3)
+        
+        except Exception as e:
+            print(f"[!] Ошибка при запросе Stocks API ({cabinet_name}): {e}")
+    
+    print(f"\n[API] Итого загружено остатков для {len(stocks_info)} товаров")
+    return stocks_info
+
+
 
 
 def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
@@ -303,7 +395,7 @@ def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
             articles.append(article)
     
     total = len(articles)
-    print(f"\n[1/4] Найдено артикулов: {total}")
+    print(f"\n[1/6] Найдено артикулов: {total}")
     
     if total == 0:
         print("[!] Нет артикулов для обработки!")
@@ -312,36 +404,50 @@ def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
     start_time = time.time()
     
     # Шаг 1: Получаем информацию о товарах (названия)
-    print("\n[2/4] Получение информации о товарах через Content API...")
+    print("\n[2/6] Получение информации о товарах через Content API...")
     product_info_dict = get_product_info(articles, api_keys, cabinet_names)
     
-    print(f"\n[DEBUG] Загружено товаров с инфо: {len(product_info_dict)}")
-    if len(product_info_dict) > 0:
-        first_key = list(product_info_dict.keys())[0]
-        print(f"[DEBUG] Пример товара: {first_key} = {product_info_dict[first_key]}")
     
     # Шаг 2: Получаем цены (до и после СПП)
-    print("\n[3/4] Получение цен через Prices API...")
+    print("\n[3/6] Получение цен через Prices API...")
     prices_dict = get_prices_full_info(articles, api_keys, cabinet_names)
     
-    print(f"\n[DEBUG] Загружено цен: {len(prices_dict)}")
-    if len(prices_dict) > 0:
-        first_key = list(prices_dict.keys())[0]
-        print(f"[DEBUG] Пример цены: {first_key} = {prices_dict[first_key]}")
     
-    # Шаг 3: Очищаем старые данные
-    print(f"\n[4/5] Очистка старых записей...")
+    # Шаг 3: Получаем остатки через Stocks API
+    print("\n[4/6] Получение остатков через Stocks API...")
+    stocks_dict = get_stocks_info(api_keys, cabinet_names, articles)
     
-    # Удаляем все строки кроме заголовка
-    if ws_out.max_row > 1:
-        ws_out.delete_rows(2, ws_out.max_row)
-        print(f"    ✓ Удалено старых записей: {ws_out.max_row - 1}")
     
-    # Создаем заголовки
-    ws_out.append(["Дата", "Кабинет", "Артикул", "Название", "Цена До СПП", "Наличие", "Цена После СПП", "СПП %", "Скидка %"])
+    # Шаг 4: Очищаем старые данные и обновляем заголовки
+    print(f"\n[5/6] Очистка старых записей...")
     
-    # Шаг 4: Объединяем данные и сохраняем
-    print(f"\n[5/5] Сохранение результатов...")
+    # Удаляем ВСЕ строки (включая заголовки) для обновления структуры
+    if ws_out.max_row >= 1:
+        ws_out.delete_rows(1, ws_out.max_row)
+        print(f"    ✓ Удалены старые данные и заголовки")
+    
+    # Создаем новые заголовки с названиями полей из API
+    ws_out.append([
+        "Дата", 
+        "Кабинет (cabinet)", 
+        "nmID", 
+        "Название (title)",
+        "Размер (techSizeName)",
+        "price", 
+        "discountedPrice", 
+        "clubDiscountedPrice",
+        "discount %",
+        "clubDiscount %",
+        "stockCount",
+        "minPrice",
+        "maxPrice"
+    ])
+    
+    # Включаем автофильтр на заголовки
+    ws_out.auto_filter.ref = ws_out.dimensions
+    
+    # Шаг 5: Объединяем данные и сохраняем
+    print(f"\n[6/6] Сохранение результатов...")
     print("="*80)
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -352,63 +458,66 @@ def parse_wb_fast_api(wb, api_keys, cabinet_names=None):
         # Получаем данные
         info = product_info_dict.get(article, {})
         prices = prices_dict.get(article, {})
+        stocks_data = stocks_dict.get(article, {})
         
         title = info.get("title", "Не найдено")
         nm_id = info.get("nmID", article)
         cabinet = info.get("cabinet", "Неизвестно")
         
-        price_original = prices.get("price_original", 0)
-        price_before = prices.get("price_before_spp", 0)
-        price_after = prices.get("price_after_spp", 0)
-        discount = prices.get("discount", 0)
-        spp = prices.get("spp", 0)
-        stocks = prices.get("stocks", 0)
+        # Все данные из Prices API
+        price_base = prices.get("price", 0)  # price
+        price_discounted = prices.get("discountedPrice", 0)  # discountedPrice
+        price_club = prices.get("clubDiscountedPrice", 0)  # clubDiscountedPrice
+        tech_size_name = prices.get("techSizeName", "")  # techSizeName
+        discount_percent = prices.get("discount", 0)  # discount
+        club_discount_percent = prices.get("clubDiscount", 0)  # clubDiscount
         
-        # Считаем процент скидки СПП (от цены до СПП к цене после)
-        spp_percent_calc = None
-        if price_before and price_after and price_before > 0:
-            spp_percent_calc = ((price_before - price_after) / price_before) * 100
+        # Остатки и цены из Stocks API
+        stock_count = stocks_data.get("stockCount", 0)
+        min_price = stocks_data.get("minPrice", 0)
+        max_price = stocks_data.get("maxPrice", 0)
         
-        print(f"[{i}/{total}] [{cabinet}] {nm_id} | {title[:40]}")
-        print(f"         До СПП: {price_before}₽ → После СПП: {price_after}₽ (СПП: {spp}%) | Остаток: {stocks} шт")
+        # Прогресс каждые 50 товаров
+        if i % 50 == 0:
+            print(f"[{i}/{total}] Обработано товаров...")
         
-        # Статус наличия (столбец F)
-        if stocks > 0:
-            stock_status = f"{stocks} шт"
-        else:
-            stock_status = "Нет в наличии"
-        
-        if price_before or price_after:
-            # Сохраняем: Дата | Кабинет | Артикул | Название | Цена До СПП | Наличие | Цена После СПП | СПП % | Скидка %
+        if price_base or price_discounted or price_club:
+            # Сохраняем все данные
             new_row = [
                 timestamp,
                 cabinet,
                 nm_id,
                 title,
-                price_before if price_before else None,
-                stock_status,  # Столбец F - наличие
-                price_after if price_after else None,
-                spp_percent_calc if spp_percent_calc else spp,
-                discount if discount else None
+                tech_size_name if tech_size_name else "",
+                price_base if price_base else None,
+                price_discounted if price_discounted else None,
+                price_club if price_club else None,
+                discount_percent if discount_percent else None,
+                club_discount_percent if club_discount_percent else None,
+                stock_count if stock_count else 0,
+                min_price if min_price else None,
+                max_price if max_price else None
             ]
             ws_out.append(new_row)
             success += 1
         else:
-            print(f"         [!] Цены не найдены")
-            # Сохраняем и без цен
+            failed += 1
             new_row = [
                 timestamp,
                 cabinet,
                 nm_id,
                 title,
+                "",
                 None,
-                stock_status,  # Столбец F - наличие
                 None,
+                None,
+                None,
+                None,
+                0,
                 None,
                 None
             ]
             ws_out.append(new_row)
-            failed += 1
     
     # Итоги
     elapsed = time.time() - start_time
