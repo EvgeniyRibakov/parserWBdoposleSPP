@@ -76,7 +76,7 @@ SOURCE_PROFILE_FOR_COPY = "Profile 4"  # Откуда копировать cooki
 BROWSER_TYPE = 'chrome'  # 'chrome' или 'edge'
 
 # Режим работы браузера
-HEADLESS_MODE = True  # True = фоновый режим (без визуального окна), False = видимый браузер
+HEADLESS_MODE = False  # True = фоновый режим (без визуального окна), False = видимый браузер
 # Примечание: В headless режиме нельзя авторизоваться вручную, используй готовый профиль!
 
 # Пауза для ручной авторизации при первом запуске
@@ -86,6 +86,12 @@ MANUAL_LOGIN_TIMEOUT = 120  # Таймаут ожидания авторизац
 # Промежуточное сохранение результатов
 SAVE_INTERMEDIATE_RESULTS = True  # Сохранять результаты каждые N товаров
 SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров (0 = только в конце)
+
+# Параллельная обработка товаров
+PARALLEL_TABS = 5  # Количество параллельных вкладок
+DELAY_BETWEEN_BATCHES = (1, 2)  # Задержка между пакетами (мин, макс) в секундах
+TEST_MODE = True  # True = тест на 25 товарах, False = все товары
+TEST_PRODUCTS_COUNT = 25  # Количество товаров для тестирования
 
 
 def check_chrome_running():
@@ -613,6 +619,189 @@ def human_delay(min_sec=1, max_sec=3):
     time.sleep(delay)
 
 
+def parse_price_from_current_page(driver, article):
+    """
+    Парсит цену с текущей открытой страницы товара
+    НЕ открывает и НЕ закрывает вкладки - это делает вызывающая функция
+    Возвращает цену или 0 если товара нет в наличии
+    """
+    try:
+        # Проверяем на captcha
+        if "Почти готово" in driver.title or "captcha" in driver.page_source.lower():
+            print(f"  [{article}] ⚠ Captcha обнаружена!")
+            return None  # None = нужна повторная попытка
+        
+        # КРИТИЧНО: Проверяем наличие элемента "Нет в наличии"
+        try:
+            sold_out_element = driver.find_element(By.CSS_SELECTOR, "h2[class*='soldOutProduct']")
+            print(f"  [{article}] ⚠ Товар недоступен: {sold_out_element.text}")
+            return 0
+        except:
+            pass  # Элемент не найден - товар в наличии
+        
+        # Дополнительная проверка по ключевым словам
+        page_text = driver.page_source.lower()
+        unavailable_keywords = ['нет в наличии', 'товар недоступен', 'недоступен для заказа', 'закончился', 'распродан']
+        
+        for keyword in unavailable_keywords:
+            if keyword in page_text:
+                print(f"  [{article}] ⚠ Товар недоступен: '{keyword}'")
+                return 0
+        
+        # Кликаем на кнопку кошелька (если есть)
+        try:
+            wallet_button = WebDriverWait(driver, 3).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[class*='priceBlockWalletPrice']"))
+            )
+            wallet_button.click()
+            time.sleep(1)  # Ждем появления финальной цены
+        except:
+            pass  # Кнопки кошелька нет - это нормально
+        
+        # Ищем элемент с финальной ценой
+        price_selectors = [
+            (By.CSS_SELECTOR, "h2.mo-typography_color_primary"),
+            (By.CSS_SELECTOR, "h2[class*='mo-typography'][class*='color_primary']"),
+            (By.CSS_SELECTOR, "ins.priceBlockFinalPrice--iToZR"),
+            (By.CSS_SELECTOR, "ins[class*='priceBlockFinalPrice']"),
+            (By.CSS_SELECTOR, "ins.mo-typography[class*='priceBlockFinalPrice']"),
+            (By.CSS_SELECTOR, "ins[class*='priceBlockFinalPrice'][class*='mo-typography']"),
+            (By.CSS_SELECTOR, "ins[class*='FinalPrice']"),
+            (By.CSS_SELECTOR, "span[class*='final-price']"),
+            (By.CSS_SELECTOR, "ins[class*='price']"),
+        ]
+        
+        price = None
+        for by, selector in price_selectors:
+            try:
+                price_elem = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((by, selector))
+                )
+                price_text = price_elem.text.strip()
+                price_num = re.sub(r'[^\d]', '', price_text)
+                if price_num:
+                    price = int(price_num)
+                    break
+            except:
+                continue
+        
+        if not price:
+            print(f"  [{article}] ⚠ Цена не найдена")
+            return 0
+        
+        return price
+    
+    except Exception as e:
+        print(f"  [{article}] ✗ Ошибка парсинга: {e}")
+        return 0
+
+
+def process_products_parallel(driver, products):
+    """
+    Обрабатывает товары параллельно по PARALLEL_TABS штук
+    Возвращает список результатов
+    """
+    results = []
+    main_window = driver.window_handles[0]
+    total = len(products)
+    
+    print(f"\n{'='*80}")
+    print(f"ПАРАЛЛЕЛЬНАЯ ОБРАБОТКА: {PARALLEL_TABS} вкладок одновременно")
+    print(f"{'='*80}\n")
+    
+    # Обрабатываем товары пачками
+    for batch_start in range(0, total, PARALLEL_TABS):
+        batch = products[batch_start : batch_start + PARALLEL_TABS]
+        batch_num = batch_start // PARALLEL_TABS + 1
+        total_batches = (total + PARALLEL_TABS - 1) // PARALLEL_TABS
+        
+        print(f"\n{'─'*80}")
+        print(f"📦 ПАКЕТ {batch_num}/{total_batches} ({len(batch)} товаров)")
+        print(f"{'─'*80}")
+        
+        # ФАЗА 1: Открыть все вкладки пакета
+        print(f"\n[1/4] Открываю {len(batch)} вкладок...")
+        for idx, product in enumerate(batch):
+            print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
+            driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
+            time.sleep(1)  # Пауза 1 секунда, чтобы WB успел загрузить страницу
+        
+        # ФАЗА 2: Ждем загрузки всех вкладок
+        print(f"\n[2/4] Жду полной загрузки страниц...")
+        tabs = driver.window_handles[1:]  # Все вкладки кроме главной
+        
+        for idx, tab_handle in enumerate(tabs):
+            try:
+                driver.switch_to.window(tab_handle)
+                # Ждем загрузки body
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                # Дополнительная проверка что страница загрузилась
+                WebDriverWait(driver, 10).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+            except:
+                pass
+        
+        print(f"  ✓ Все {len(tabs)} вкладок загружены")
+        time.sleep(1)  # Финальная задержка для полной загрузки всех элементов
+        
+        # ФАЗА 3: Парсим цены из всех вкладок
+        print(f"\n[3/4] Парсинг цен...")
+        for idx, (tab_handle, product) in enumerate(zip(tabs, batch)):
+            try:
+                driver.switch_to.window(tab_handle)
+                price = parse_price_from_current_page(driver, product['article'])
+                
+                # Если captcha - пропускаем
+                if price is None:
+                    price = 0
+                
+                results.append({
+                    'url': product['url'],
+                    'article': product['article'],
+                    'price': price
+                })
+                
+                status = f"{price} ₽" if price > 0 else "недоступен" if price == 0 else "ошибка"
+                print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: {status}")
+            
+            except Exception as e:
+                print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: ✗ ошибка - {e}")
+                results.append({
+                    'url': product['url'],
+                    'article': product['article'],
+                    'price': 0
+                })
+        
+        # ФАЗА 4: Закрыть все вкладки пакета
+        print(f"\n[4/4] Закрываю вкладки...")
+        for tab_handle in tabs:
+            try:
+                driver.switch_to.window(tab_handle)
+                driver.close()
+            except:
+                pass
+        
+        # Возвращаемся на главную вкладку
+        driver.switch_to.window(main_window)
+        
+        # Промежуточное сохранение
+        if SAVE_INTERMEDIATE_RESULTS and len(results) % SAVE_EVERY_N_PRODUCTS == 0:
+            print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
+            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+                print(f"✓ Сохранено")
+        
+        # Задержка между пакетами
+        if batch_start + PARALLEL_TABS < total:
+            delay = random.uniform(*DELAY_BETWEEN_BATCHES)
+            print(f"\n⏸ Пауза {delay:.1f}с перед следующим пакетом...\n")
+            time.sleep(delay)
+    
+    return results
+
+
 def get_price_from_product_page(driver, product_url, article):
     """
     Открывает карточку товара по ссылке и извлекает цену
@@ -832,6 +1021,11 @@ def main():
         wb.close()
         return
     
+    # ТЕСТОВЫЙ РЕЖИМ: ограничиваем количество товаров
+    if TEST_MODE:
+        products = products[:TEST_PRODUCTS_COUNT]
+        print(f"⚠️  ТЕСТОВЫЙ РЕЖИМ: обработка первых {len(products)} товаров")
+    
     # Запускаем Chrome
     print(f"\n[2/3] Запуск Chrome...")
     
@@ -876,90 +1070,12 @@ def main():
                 print(f"\n[!] Ошибка при проверке WB: {e}")
                 print(f"    Продолжаю парсинг...")
         
-        # Парсим товары
+        # Парсим товары (параллельно)
         print(f"\n[3/3] Парсинг цен...")
         print("="*80)
         
-        for i, product in enumerate(products, 1):
-            print(f"\n{'='*60}")
-            print(f"[{i}/{len(products)}] Артикул: {product['article']}")
-            
-            try:
-                price = get_price_from_product_page(driver, product['url'], product['article'])
-                
-                # Сохраняем результат (даже если цена 0)
-                results.append({
-                    'url': product['url'],
-                    'article': product['article'],
-                    'price': price if price is not None else 0
-                })
-                
-                if price and price > 0:
-                    print(f"  ✓ УСПЕХ: {price} ₽")
-                elif price == 0:
-                    print(f"  ✓ Товар недоступен: цена = 0")
-                else:
-                    print(f"  ✗ НЕ УДАЛОСЬ")
-                
-                # Промежуточное сохранение (если включено)
-                if SAVE_INTERMEDIATE_RESULTS and SAVE_EVERY_N_PRODUCTS > 0:
-                    if i % SAVE_EVERY_N_PRODUCTS == 0:
-                        print(f"\n  💾 Промежуточное сохранение ({i} товаров)...")
-                        if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-                            print(f"  ✓ Сохранено: {len(results)} товаров")
-            
-            except InvalidSessionIdException:
-                print(f"  ✗ Сессия разорвана, переподключаюсь...")
-                # Закрываем старый драйвер
-                try:
-                    driver.quit()
-                except:
-                    pass
-                # Переподключаемся
-                driver = setup_browser_driver()
-                if not driver:
-                    print(f"  ✗ Не удалось переподключиться!")
-                    break
-                print(f"  ✓ Переподключено")
-                # Пробуем ещё раз
-                try:
-                    price = get_price_from_product_page(driver, product['url'], product['article'])
-                    results.append({
-                        'url': product['url'],
-                        'article': product['article'],
-                        'price': price if price is not None else 0
-                    })
-                    if price and price > 0:
-                        print(f"  ✓ УСПЕХ: {price} ₽")
-                    elif price == 0:
-                        print(f"  ✓ Товар недоступен: цена = 0")
-                    
-                    # Промежуточное сохранение (если включено)
-                    if SAVE_INTERMEDIATE_RESULTS and SAVE_EVERY_N_PRODUCTS > 0:
-                        if i % SAVE_EVERY_N_PRODUCTS == 0:
-                            print(f"\n  💾 Промежуточное сохранение ({i} товаров)...")
-                            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-                                print(f"  ✓ Сохранено: {len(results)} товаров")
-                except:
-                    results.append({
-                        'url': product['url'],
-                        'article': product['article'],
-                        'price': 0
-                    })
-                    print(f"  ✗ Ошибка при повторной попытке")
-                    
-                    # Промежуточное сохранение (если включено)
-                    if SAVE_INTERMEDIATE_RESULTS and SAVE_EVERY_N_PRODUCTS > 0:
-                        if i % SAVE_EVERY_N_PRODUCTS == 0:
-                            print(f"\n  💾 Промежуточное сохранение ({i} товаров)...")
-                            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-                                print(f"  ✓ Сохранено: {len(results)} товаров")
-            
-            # Задержка между товарами
-            if i < len(products):
-                delay = random.uniform(2, 5)
-                print(f"\n  [пауза {delay:.1f}с перед следующим товаром]")
-                time.sleep(delay)
+        # Используем параллельную обработку
+        results = process_products_parallel(driver, products)
         
     except Exception as e:
         print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА: {e}")
