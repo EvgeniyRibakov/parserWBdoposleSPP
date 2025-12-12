@@ -83,6 +83,10 @@ HEADLESS_MODE = True  # True = фоновый режим (без визуаль�
 WAIT_FOR_MANUAL_LOGIN = True  # Ждать пока пользователь авторизуется
 MANUAL_LOGIN_TIMEOUT = 120  # Таймаут ожидания авторизации (секунды)
 
+# Промежуточное сохранение результатов
+SAVE_INTERMEDIATE_RESULTS = True  # Сохранять результаты каждые N товаров
+SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров (0 = только в конце)
+
 
 def check_chrome_running():
     """Проверяет, запущен ли Chrome"""
@@ -428,6 +432,17 @@ def setup_browser_driver():
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-plugins")
         options.add_argument("--disable-popup-blocking")
+        
+        # Специальные опции для headless режима
+        if HEADLESS_MODE:
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-software-rasterizer")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--disable-background-timer-throttling")
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            options.add_argument("--disable-renderer-backgrounding")
+            print(f"[ЛОГ] Добавлены опции для headless режима")
+        
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
         
@@ -465,6 +480,10 @@ def setup_browser_driver():
                     # Копируем данные из Profile 4
                     if os.path.exists(source_profile_path):
                         copy_profile_data(source_profile_path, target_profile_path)
+                        # Очищаем lock-файлы в профиле парсера
+                        print(f"[ЛОГ] Очистка lock-файлов в профиле парсера...")
+                        cleanup_profile_locks(TEMP_PROFILE_DIR)
+                        time.sleep(1)  # Небольшая задержка после копирования
                     else:
                         print(f"[!] Профиль '{SOURCE_PROFILE_FOR_COPY}' не найден, запускаю без копирования")
                 
@@ -472,23 +491,87 @@ def setup_browser_driver():
                     mode_text = "headless (фоновый)" if HEADLESS_MODE else "видимый"
                     print(f"[ЛОГ] Запуск Chrome с профилем: {TEMP_PROFILE_DIR}...")
                     print(f"[ЛОГ] Режим: {mode_text}")
-                    driver = uc.Chrome(
-                        user_data_dir=TEMP_PROFILE_DIR,
-                        headless=HEADLESS_MODE,
-                        use_subprocess=False,
-                        version_main=143
-                    )
-                    print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
+                    
+                    # Для headless режима используем use_subprocess=True для стабильности
+                    use_subprocess = HEADLESS_MODE
+                    
+                    # Проверяем, не мешают ли запущенные процессы Chrome
+                    chrome_running = check_chrome_running()
+                    if chrome_running and HEADLESS_MODE:
+                        print(f"[ЛОГ] ⚠ Chrome уже запущен. Это может мешать headless режиму.")
+                        print(f"[ЛОГ] Рекомендуется закрыть Chrome перед запуском парсера.")
+                        print(f"[ЛОГ] Пробую запустить несмотря на это...")
+                        time.sleep(2)  # Даем время на освобождение ресурсов
+                    
+                    try:
+                        driver = uc.Chrome(
+                            user_data_dir=TEMP_PROFILE_DIR,
+                            headless=HEADLESS_MODE,
+                            use_subprocess=use_subprocess,
+                            version_main=143
+                        )
+                        print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
+                    except Exception as e:
+                        error_msg = str(e)
+                        print(f"[ЛОГ] Первая попытка не удалась: {error_msg}")
+                        
+                        # Если ошибка связана с подключением, пробуем еще раз с задержкой
+                        if "cannot connect" in error_msg.lower() or "not reachable" in error_msg.lower():
+                            print(f"[ЛОГ] Ошибка подключения. Очищаю lock-файлы и пробую еще раз...")
+                            cleanup_profile_locks(TEMP_PROFILE_DIR)
+                            time.sleep(3)
+                            
+                            try:
+                                driver = uc.Chrome(
+                                    user_data_dir=TEMP_PROFILE_DIR,
+                                    headless=HEADLESS_MODE,
+                                    use_subprocess=True,  # Всегда True для повторной попытки
+                                    version_main=143
+                                )
+                                print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
+                            except Exception as e2:
+                                print(f"[ЛОГ] Повторная попытка также не удалась: {e2}")
+                                raise
+                        # Пробуем с use_subprocess=True если была False
+                        elif not use_subprocess:
+                            print(f"[ЛОГ] Пробую с use_subprocess=True...")
+                            driver = uc.Chrome(
+                                user_data_dir=TEMP_PROFILE_DIR,
+                                headless=HEADLESS_MODE,
+                                use_subprocess=True,
+                                version_main=143
+                            )
+                            print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
+                        else:
+                            raise
                 else:
                     mode_text = "headless (фоновый)" if HEADLESS_MODE else "видимый"
                     print(f"[ЛОГ] Запуск Chrome БЕЗ профиля (временный)...")
                     print(f"[ЛОГ] Режим: {mode_text}")
-                    driver = uc.Chrome(
-                        headless=HEADLESS_MODE,
-                        use_subprocess=False,
-                        version_main=143
-                    )
-                    print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
+                    
+                    # Для headless режима используем use_subprocess=True для стабильности
+                    use_subprocess = HEADLESS_MODE
+                    
+                    try:
+                        driver = uc.Chrome(
+                            headless=HEADLESS_MODE,
+                            use_subprocess=use_subprocess,
+                            version_main=143
+                        )
+                        print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
+                    except Exception as e:
+                        print(f"[ЛОГ] Первая попытка не удалась: {e}")
+                        # Пробуем с use_subprocess=True если была False
+                        if not use_subprocess:
+                            print(f"[ЛОГ] Пробую с use_subprocess=True...")
+                            driver = uc.Chrome(
+                                headless=HEADLESS_MODE,
+                                use_subprocess=True,
+                                version_main=143
+                            )
+                            print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
+                        else:
+                            raise
             
             print(f"[ЛОГ] ✓ WebDriver создан успешно")
             print(f"[ЛОГ] Session ID: {driver.session_id}")
@@ -665,6 +748,40 @@ def get_price_from_product_page(driver, product_url, article):
         return 0
 
 
+def save_results_to_excel(results, output_file):
+    """Сохраняет результаты в Excel файл"""
+    try:
+        from openpyxl import Workbook
+        
+        # Создаём новый Excel файл
+        wb_out = Workbook()
+        ws_out = wb_out.active
+        ws_out.title = "Цены"
+        
+        # Заголовки
+        ws_out.append(["ссылка на товар", "артикул", "цена"])
+        
+        # Данные
+        for result in results:
+            ws_out.append([
+                result['url'],
+                result['article'],
+                result['price']
+            ])
+        
+        # Автофильтр
+        ws_out.auto_filter.ref = ws_out.dimensions
+        
+        # Сохраняем файл
+        wb_out.save(output_file)
+        wb_out.close()
+        
+        return True
+    except Exception as e:
+        print(f"\n[!] ОШИБКА при сохранении: {e}")
+        return False
+
+
 def main():
     print("\n" + "="*80)
     print("ПАРСЕР ЦЕН WB - ПРОСТОЙ ПАРСЕР")
@@ -719,6 +836,7 @@ def main():
     print(f"\n[2/3] Запуск Chrome...")
     
     driver = None
+    results = []  # Инициализируем результаты вне try, чтобы сохранить в finally
     try:
         driver = setup_browser_driver()
         
@@ -748,42 +866,19 @@ def main():
             print(f"\n⚠️  ВНИМАНИЕ: Headless режим активен!")
             print(f"   Авторизация через браузер невозможна (браузер не виден).")
             print(f"   Убедитесь, что профиль уже авторизован или используйте видимый режим для первой авторизации.\n")
-            
+            # В headless режиме просто проверяем, что профиль работает
             try:
-                # Открываем главную WB для авторизации
-                print(f"[ЛОГ] Открываю главную страницу WB для авторизации...")
+                print(f"[ЛОГ] Проверяю доступность WB...")
                 driver.get("https://www.wildberries.ru/")
-                time.sleep(3)
-                
-                # Ждем нажатия Enter от пользователя
-                import threading
-                import sys
-                
-                def wait_for_enter():
-                    input("Нажмите ENTER когда авторизуетесь и установите адрес >>> ")
-                
-                # Запускаем ожидание Enter в отдельном потоке
-                print(f"⏳ Жду вашей авторизации...")
-                wait_thread = threading.Thread(target=wait_for_enter, daemon=True)
-                wait_thread.start()
-                wait_thread.join(timeout=MANUAL_LOGIN_TIMEOUT)
-                
-                if wait_thread.is_alive():
-                    print(f"\n⚠ Таймаут истек! Продолжаю парсинг...")
-                else:
-                    print(f"\n✓ Отлично! Начинаю парсинг...")
-                
                 time.sleep(2)
-                
+                print(f"[ЛОГ] ✓ WB доступен, продолжаю парсинг...")
             except Exception as e:
-                print(f"\n[!] Ошибка при ожидании авторизации: {e}")
+                print(f"\n[!] Ошибка при проверке WB: {e}")
                 print(f"    Продолжаю парсинг...")
         
         # Парсим товары
         print(f"\n[3/3] Парсинг цен...")
         print("="*80)
-        
-        results = []
         
         for i, product in enumerate(products, 1):
             print(f"\n{'='*60}")
@@ -805,6 +900,13 @@ def main():
                     print(f"  ✓ Товар недоступен: цена = 0")
                 else:
                     print(f"  ✗ НЕ УДАЛОСЬ")
+                
+                # Промежуточное сохранение (если включено)
+                if SAVE_INTERMEDIATE_RESULTS and SAVE_EVERY_N_PRODUCTS > 0:
+                    if i % SAVE_EVERY_N_PRODUCTS == 0:
+                        print(f"\n  💾 Промежуточное сохранение ({i} товаров)...")
+                        if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+                            print(f"  ✓ Сохранено: {len(results)} товаров")
             
             except InvalidSessionIdException:
                 print(f"  ✗ Сессия разорвана, переподключаюсь...")
@@ -831,6 +933,13 @@ def main():
                         print(f"  ✓ УСПЕХ: {price} ₽")
                     elif price == 0:
                         print(f"  ✓ Товар недоступен: цена = 0")
+                    
+                    # Промежуточное сохранение (если включено)
+                    if SAVE_INTERMEDIATE_RESULTS and SAVE_EVERY_N_PRODUCTS > 0:
+                        if i % SAVE_EVERY_N_PRODUCTS == 0:
+                            print(f"\n  💾 Промежуточное сохранение ({i} товаров)...")
+                            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+                                print(f"  ✓ Сохранено: {len(results)} товаров")
                 except:
                     results.append({
                         'url': product['url'],
@@ -838,6 +947,13 @@ def main():
                         'price': 0
                     })
                     print(f"  ✗ Ошибка при повторной попытке")
+                    
+                    # Промежуточное сохранение (если включено)
+                    if SAVE_INTERMEDIATE_RESULTS and SAVE_EVERY_N_PRODUCTS > 0:
+                        if i % SAVE_EVERY_N_PRODUCTS == 0:
+                            print(f"\n  💾 Промежуточное сохранение ({i} товаров)...")
+                            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+                                print(f"  ✓ Сохранено: {len(results)} товаров")
             
             # Задержка между товарами
             if i < len(products):
@@ -845,43 +961,21 @@ def main():
                 print(f"\n  [пауза {delay:.1f}с перед следующим товаром]")
                 time.sleep(delay)
         
-        # Сохраняем результаты в Excel файл
-        print(f"\n{'='*80}")
-        print("СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
-        print(f"{'='*80}")
-        
-        # Создаём новый Excel файл
-        wb_out = Workbook()
-        ws_out = wb_out.active
-        ws_out.title = "Цены"
-        
-        # Заголовки
-        ws_out.append(["ссылка на товар", "артикул", "цена"])
-        
-        # Данные
-        for result in results:
-            ws_out.append([
-                result['url'],
-                result['article'],
-                result['price']
-            ])
-        
-        # Автофильтр
-        ws_out.auto_filter.ref = ws_out.dimensions
-        
-        # Сохраняем файл
-        wb_out.save(OUTPUT_EXCEL_FILE)
-        wb_out.close()
-        
-        print(f"\n✓ Сохранено: {len(results)} товаров")
-        print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
-        
     except Exception as e:
         print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА: {e}")
         import traceback
         traceback.print_exc()
     
     finally:
+        # Сохраняем результаты в Excel файл (всегда, даже при ошибках)
+        print(f"\n{'='*80}")
+        print("ФИНАЛЬНОЕ СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
+        print(f"{'='*80}")
+        
+        if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+            print(f"\n✓ Сохранено: {len(results)} товаров")
+            print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
+        
         if driver:
             print(f"\n[Закрываю Chrome через 5 секунд...]")
             time.sleep(5)
