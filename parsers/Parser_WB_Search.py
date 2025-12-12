@@ -90,8 +90,8 @@ SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров 
 # Параллельная обработка товаров
 PARALLEL_TABS = 10  # Количество параллельных вкладок
 DELAY_BETWEEN_BATCHES = (0.5, 1)  # Задержка между пакетами (мин, макс) в секундах
-TEST_MODE = True  # True = тест на 25 товарах, False = все товары
-TEST_PRODUCTS_COUNT = 25  # Количество товаров для тестирования
+TEST_MODE = True  # True = тест на 50 товарах, False = все товары
+TEST_PRODUCTS_COUNT = 50  # Количество товаров для тестирования
 
 
 def check_chrome_running():
