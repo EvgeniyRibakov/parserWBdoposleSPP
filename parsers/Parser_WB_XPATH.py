@@ -42,6 +42,8 @@ import os
 import time
 import random
 import re
+import subprocess
+import shutil
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -110,8 +112,6 @@ def cleanup_profile_locks(profile_path):
 
 def copy_profile_data(source_profile, target_profile):
     """Копирует cookies и данные авторизации из профиля Chrome"""
-    import shutil
-    
     print(f"\n{'='*60}")
     print(f"[КОПИРОВАНИЕ] Перенос данных профиля")
     print(f"{'='*60}")
@@ -163,11 +163,33 @@ def copy_profile_data(source_profile, target_profile):
     return copied_count > 0
 
 
+def check_chrome_running():
+    """Проверяет, запущен ли Chrome"""
+    try:
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq chrome.exe'], 
+                              capture_output=True, text=True, timeout=5)
+        is_running = 'chrome.exe' in result.stdout
+        if is_running:
+            lines = [line for line in result.stdout.split('\n') if 'chrome.exe' in line]
+            print(f"[ЛОГ] ⚠ Chrome уже запущен (процессов: {len(lines)})")
+        return is_running
+    except:
+        return False
+
+
 def setup_browser():
     """Настраивает и запускает браузер"""
     print(f"\n{'='*60}")
     print(f"[БРАУЗЕР] Настройка Chrome")
     print(f"{'='*60}")
+    
+    # Проверяем запущенный Chrome
+    chrome_running = check_chrome_running()
+    if chrome_running:
+        print(f"[ЛОГ] ⚠ Обнаружен запущенный Chrome")
+        print(f"[ЛОГ] Рекомендуется закрыть Chrome перед запуском парсера")
+        print(f"[ЛОГ] Продолжаю попытку запуска...")
+        time.sleep(2)
     
     # Копируем данные профиля если нужно
     if COPY_PROFILE_DATA and USE_TEMP_PROFILE:
@@ -177,34 +199,82 @@ def setup_browser():
             cleanup_profile_locks(TEMP_PROFILE_DIR)
             time.sleep(1)
     
-    # Запускаем Chrome
-    try:
-        if USE_TEMP_PROFILE:
-            print(f"[ЛОГ] Запуск Chrome с профилем: {TEMP_PROFILE_DIR}")
-            driver = uc.Chrome(
-                user_data_dir=TEMP_PROFILE_DIR,
-                headless=HEADLESS_MODE,
-                use_subprocess=True,
-                version_main=143
-            )
-        else:
-            print(f"[ЛОГ] Запуск Chrome с временным профилем")
-            driver = uc.Chrome(
-                headless=HEADLESS_MODE,
-                use_subprocess=True,
-                version_main=143
-            )
-        
-        print(f"[ЛОГ] ✓ Chrome запущен")
-        
-        # Устанавливаем таймаут загрузки страниц
-        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
-        
-        return driver
+    # Очищаем lock файлы перед запуском
+    if USE_TEMP_PROFILE:
+        print(f"[ЛОГ] Очистка lock-файлов профиля...")
+        cleanup_profile_locks(TEMP_PROFILE_DIR)
+        time.sleep(1)
     
-    except Exception as e:
-        print(f"\n[!] ОШИБКА запуска Chrome: {e}")
-        return None
+    # Пробуем запустить Chrome с разными настройками
+    attempts = [
+        {'use_subprocess': True, 'version_main': None},  # Автоопределение версии
+        {'use_subprocess': True, 'version_main': 143},  # Явная версия
+        {'use_subprocess': False, 'version_main': None},  # Без subprocess
+    ]
+    
+    for attempt_num, attempt_config in enumerate(attempts, 1):
+        try:
+            print(f"\n[ЛОГ] Попытка {attempt_num}/{len(attempts)} запуска Chrome...")
+            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, "
+                  f"version_main={attempt_config['version_main']}")
+            
+            if USE_TEMP_PROFILE:
+                print(f"[ЛОГ] Запуск Chrome с профилем: {TEMP_PROFILE_DIR}")
+                driver = uc.Chrome(
+                    user_data_dir=TEMP_PROFILE_DIR,
+                    headless=HEADLESS_MODE,
+                    use_subprocess=attempt_config['use_subprocess'],
+                    version_main=attempt_config['version_main']
+                )
+            else:
+                print(f"[ЛОГ] Запуск Chrome с временным профилем")
+                driver = uc.Chrome(
+                    headless=HEADLESS_MODE,
+                    use_subprocess=attempt_config['use_subprocess'],
+                    version_main=attempt_config['version_main']
+                )
+            
+            print(f"[ЛОГ] ✓ Chrome запущен успешно!")
+            
+            # Проверяем что драйвер работает
+            try:
+                driver.current_url  # Простая проверка
+            except:
+                print(f"[ЛОГ] ⚠ Драйвер создан, но не отвечает. Пробую следующую попытку...")
+                try:
+                    driver.quit()
+                except:
+                    pass
+                continue
+            
+            # Устанавливаем таймаут загрузки страниц
+            driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+            
+            return driver
+        
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[ЛОГ] ✗ Попытка {attempt_num} не удалась: {error_msg[:200]}")
+            
+            # Если это последняя попытка - выводим полную ошибку
+            if attempt_num == len(attempts):
+                print(f"\n{'='*60}")
+                print(f"[ОШИБКА] Все попытки запуска Chrome не удались")
+                print(f"{'='*60}")
+                print(f"\n💡 ВОЗМОЖНЫЕ РЕШЕНИЯ:")
+                print(f"   1. Закройте ВСЕ окна Chrome: taskkill /F /IM chrome.exe")
+                print(f"   2. Подождите 10 секунд и попробуйте снова")
+                print(f"   3. Перезагрузите компьютер (если Chrome завис)")
+                print(f"   4. Проверьте антивирус (может блокировать)")
+                print(f"   5. Попробуйте запустить Chrome вручную и закройте его")
+                print(f"\nПолная ошибка:")
+                import traceback
+                traceback.print_exc()
+            else:
+                print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                time.sleep(2)
+    
+    return None
 
 
 def scroll_to_bottom(driver):
