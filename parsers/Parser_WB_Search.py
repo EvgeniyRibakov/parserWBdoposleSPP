@@ -88,7 +88,7 @@ SAVE_INTERMEDIATE_RESULTS = True  # Сохранять результаты ка
 SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров (0 = только в конце)
 
 # Параллельная обработка товаров
-PARALLEL_TABS = 5  # Количество параллельных вкладок
+PARALLEL_TABS = 10  # Количество параллельных вкладок
 DELAY_BETWEEN_BATCHES = (1, 2)  # Задержка между пакетами (мин, макс) в секундах
 TEST_MODE = True  # True = тест на 25 товарах, False = все товары
 TEST_PRODUCTS_COUNT = 25  # Количество товаров для тестирования
@@ -650,11 +650,11 @@ def parse_price_from_current_page(driver, article):
         
         # Кликаем на кнопку кошелька (если есть)
         try:
-            wallet_button = WebDriverWait(driver, 3).until(
+            wallet_button = WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[class*='priceBlockWalletPrice']"))
             )
             wallet_button.click()
-            time.sleep(1)  # Ждем появления финальной цены
+            time.sleep(1.5)  # Ждем появления финальной цены
         except:
             pass  # Кнопки кошелька нет - это нормально
         
@@ -674,7 +674,7 @@ def parse_price_from_current_page(driver, article):
         price = None
         for by, selector in price_selectors:
             try:
-                price_elem = WebDriverWait(driver, 5).until(
+                price_elem = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((by, selector))
                 )
                 price_text = price_elem.text.strip()
@@ -686,7 +686,25 @@ def parse_price_from_current_page(driver, article):
                 continue
         
         if not price:
-            print(f"  [{article}] ⚠ Цена не найдена")
+            # Если цена не найдена, подождем еще и попробуем снова
+            print(f"  [{article}] ⚠ Цена не найдена с первой попытки, жду еще 3 секунды...")
+            time.sleep(3)
+            
+            # Повторная попытка найти цену
+            for by, selector in price_selectors:
+                try:
+                    price_elem = driver.find_element(by, selector)
+                    price_text = price_elem.text.strip()
+                    price_num = re.sub(r'[^\d]', '', price_text)
+                    if price_num:
+                        price = int(price_num)
+                        print(f"  [{article}] ✓ Цена найдена со второй попытки: {price} ₽")
+                        break
+                except:
+                    continue
+        
+        if not price:
+            print(f"  [{article}] ✗ Цена не найдена даже после повторной попытки")
             return 0
         
         return price
@@ -734,18 +752,18 @@ def process_products_parallel(driver, products):
             try:
                 driver.switch_to.window(tab_handle)
                 # Ждем загрузки body
-                WebDriverWait(driver, 15).until(
+                WebDriverWait(driver, 20).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
                 # Дополнительная проверка что страница загрузилась
-                WebDriverWait(driver, 10).until(
+                WebDriverWait(driver, 15).until(
                     lambda d: d.execute_script("return document.readyState") == "complete"
                 )
-            except:
-                pass
+            except Exception as e:
+                print(f"  ⚠ Вкладка {idx+1} загружается медленно...")
         
         print(f"  ✓ Все {len(tabs)} вкладок загружены")
-        time.sleep(1)  # Финальная задержка для полной загрузки всех элементов
+        time.sleep(2)  # Финальная задержка для полной загрузки всех элементов (включая цены)
         
         # ФАЗА 3: Парсим цены из всех вкладок
         print(f"\n[3/4] Парсинг цен...")
