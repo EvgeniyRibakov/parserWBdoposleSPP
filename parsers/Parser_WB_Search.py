@@ -89,7 +89,7 @@ SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров 
 
 # Параллельная обработка товаров
 PARALLEL_TABS = 10  # Количество параллельных вкладок
-DELAY_BETWEEN_BATCHES = (0.5, 1)  # Задержка между пакетами (мин, макс) в секундах
+DELAY_BETWEEN_BATCHES = (0.3, 0.7)  # Задержка между пакетами (мин, макс) в секундах
 TEST_MODE = True  # True = тест на 50 товарах, False = все товары
 TEST_PRODUCTS_COUNT = 50  # Количество товаров для тестирования
 
@@ -650,11 +650,11 @@ def parse_price_from_current_page(driver, article):
         
         # Кликаем на кнопку кошелька (если есть)
         try:
-            wallet_button = WebDriverWait(driver, 2).until(
+            wallet_button = WebDriverWait(driver, 1.5).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[class*='priceBlockWalletPrice']"))
             )
             wallet_button.click()
-            time.sleep(0.5)  # Ждем появления финальной цены
+            time.sleep(0.3)  # Ждем появления финальной цены
         except:
             pass  # Кнопки кошелька нет - это нормально
         
@@ -674,7 +674,7 @@ def parse_price_from_current_page(driver, article):
         price = None
         for by, selector in price_selectors:
             try:
-                price_elem = WebDriverWait(driver, 5).until(
+                price_elem = WebDriverWait(driver, 3).until(
                     EC.presence_of_element_located((by, selector))
                 )
                 price_text = price_elem.text.strip()
@@ -687,8 +687,8 @@ def parse_price_from_current_page(driver, article):
         
         if not price:
             # Если цена не найдена, подождем еще и попробуем снова
-            print(f"  [{article}] ⚠ Цена не найдена с первой попытки, жду еще 1.5 секунды...")
-            time.sleep(1.5)
+            print(f"  [{article}] ⚠ Цена не найдена с первой попытки, жду еще 1 секунду...")
+            time.sleep(1)
             
             # Повторная попытка найти цену
             for by, selector in price_selectors:
@@ -748,8 +748,8 @@ def process_products_parallel(driver, products):
         print(f"\n[2/4] Жду полной загрузки страниц...")
         tabs = driver.window_handles[1:]  # Все вкладки кроме главной
         
-        # Просто ждем 3 секунды - за это время все 10 вкладок успеют загрузиться
-        time.sleep(3)
+        # Ждем 2 секунды - минимум для загрузки страниц
+        time.sleep(2)
         
         print(f"  ✓ Все {len(tabs)} вкладок загружены")
         
