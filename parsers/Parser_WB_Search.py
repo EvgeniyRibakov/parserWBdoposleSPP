@@ -1108,7 +1108,11 @@ def process_products_parallel(driver, products):
                 print(f"✓ Сохранено в Excel")
             # Сохраняем в Google Таблицы (если включено)
             if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
-                save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME)
+                print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
+                if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+                    print(f"✓ Сохранено в Google Таблицы")
+                else:
+                    print(f"⚠ Не удалось сохранить в Google Таблицы")
             # Сохраняем CSV для Google Таблиц (резервный способ)
             save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
         
@@ -1333,9 +1337,12 @@ def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
         
         # Пробуем использовать Service Account (самый простой способ)
         if os.path.exists(service_account_file):
-            print(f"\n📊 Подключение к Google Таблице через Service Account...")
+            print(f"  📊 Подключение к Google Таблице через Service Account...")
+            print(f"     Файл: {service_account_file}")
             gc = gspread.service_account(filename=service_account_file)
+            print(f"     Подключение успешно!")
             spreadsheet = gc.open_by_key(sheet_id)
+            print(f"     Таблица открыта: {spreadsheet.title}")
         else:
             # Используем OAuth2 (требует один раз авторизоваться через браузер)
             # OAuth2 авторизация (более безопасно)
