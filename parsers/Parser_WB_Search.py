@@ -1042,17 +1042,55 @@ def process_products_parallel(driver, products):
             
             # ФАЗА 1: Открыть все вкладки пакета
             print(f"\n[1/4] Открываю {len(batch)} вкладок...")
+            
+            # Убеждаемся что мы на главной вкладке
+            try:
+                driver.switch_to.window(main_window)
+            except:
+                main_window = driver.window_handles[0]
+                driver.switch_to.window(main_window)
+            
+            # Открываем все вкладки
             for idx, product in enumerate(batch):
-                print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
-                driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
-                time.sleep(0.3)  # Минимальная задержка между открытием вкладок
+                try:
+                    print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
+                    driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
+                    time.sleep(0.5)  # Задержка между открытием вкладок
+                except Exception as e:
+                    print(f"  [{batch_start + idx + 1}/{total}] ⚠ Ошибка: {e}")
             
             # ФАЗА 2: Ждем загрузки всех вкладок
             print(f"\n[2/4] Жду полной загрузки страниц...")
-            tabs = driver.window_handles[1:]  # Все вкладки кроме главной
+            time.sleep(2)  # Даем время на открытие вкладок
             
-            # Ждем 3 секунды для надежной загрузки страниц
+            # Получаем все вкладки кроме главной
+            try:
+                all_handles = driver.window_handles
+                tabs = [h for h in all_handles if h != main_window]
+                print(f"  [ЛОГ] Всего окон: {len(all_handles)}, вкладок для парсинга: {len(tabs)}")
+            except Exception as e:
+                print(f"  ⚠ Ошибка получения вкладок: {e}")
+                tabs = []
+            
+            # Ждем еще немного для загрузки страниц
             time.sleep(3)
+            
+            if len(tabs) == 0:
+                print(f"  ⚠ ВНИМАНИЕ: Вкладки не открылись! Пробую еще раз...")
+                # Пробуем открыть еще раз
+                for idx, product in enumerate(batch):
+                    try:
+                        driver.execute_script(f"window.open('{product['url']}', '_blank');")
+                        time.sleep(0.3)
+                    except:
+                        pass
+                time.sleep(2)
+                try:
+                    all_handles = driver.window_handles
+                    tabs = [h for h in all_handles if h != main_window]
+                    print(f"  [ЛОГ] После повторной попытки: {len(tabs)} вкладок")
+                except:
+                    tabs = []
             
             print(f"  ✓ Все {len(tabs)} вкладок загружены")
             
