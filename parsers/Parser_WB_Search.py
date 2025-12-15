@@ -1627,25 +1627,23 @@ def main():
         traceback.print_exc()
     
     finally:
-        # Сохраняем результаты в Excel файл (всегда, даже при ошибках)
+        # Сохраняем результаты в Google Таблицы (всегда, даже при ошибках)
         print(f"\n{'='*80}")
         print("ФИНАЛЬНОЕ СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
         print(f"{'='*80}")
         
         if len(results) > 0:
-            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-                print(f"\n✓ Сохранено в Excel: {len(results)} товаров")
-                print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
-            
-            # Сохраняем в Google Таблицы (если включено)
+            # Сохраняем в Google Таблицы (единственный способ сохранения)
             if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
-                print(f"\n📊 Запись в Google Таблицы ({len(results)} товаров)...")
+                print(f"\n📊 Финальная запись в Google Таблицы ({len(results)} товаров)...")
                 if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
                     print(f"✓ Данные загружены в Google Таблицы")
+                    print(f"  Ссылка: {GOOGLE_SHEET_URL}")
                 else:
                     print(f"⚠ Не удалось сохранить в Google Таблицы")
-                    print(f"\n📊 Сохранение CSV для Google Таблиц (резервный способ)...")
-                    save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
+            else:
+                print(f"\n⚠ Google Таблицы не настроены!")
+                print(f"   Установите GOOGLE_SHEETS_ENABLED = True и укажите GOOGLE_SHEET_URL")
         else:
             print(f"\n⚠ Нет данных для сохранения (results пустой)")
             print(f"   Возможные причины:")
