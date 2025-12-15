@@ -1029,10 +1029,11 @@ def process_products_parallel(driver, products):
     print(f"{'='*80}\n")
     
     # Обрабатываем товары пачками
-    for batch_start in range(0, total, PARALLEL_TABS):
-        batch = products[batch_start : batch_start + PARALLEL_TABS]
-        batch_num = batch_start // PARALLEL_TABS + 1
-        total_batches = (total + PARALLEL_TABS - 1) // PARALLEL_TABS
+    try:
+        for batch_start in range(0, total, PARALLEL_TABS):
+            batch = products[batch_start : batch_start + PARALLEL_TABS]
+            batch_num = batch_start // PARALLEL_TABS + 1
+            total_batches = (total + PARALLEL_TABS - 1) // PARALLEL_TABS
         
         print(f"\n{'─'*80}")
         print(f"📦 ПАКЕТ {batch_num}/{total_batches} ({len(batch)} товаров)")
@@ -1584,10 +1585,17 @@ def main():
         print("="*80)
         
         # Используем параллельную обработку
-        results = process_products_parallel(driver, products)
+        parsed_results = process_products_parallel(driver, products)
+        # Объединяем результаты (на случай если уже были частичные результаты)
+        if parsed_results:
+            results = parsed_results
+            print(f"\n✓ Парсинг завершен: собрано {len(results)} товаров")
+        else:
+            print(f"\n⚠ Парсинг не вернул результатов (возможно произошла ошибка)")
         
     except Exception as e:
         print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        print(f"    Сохраню уже собранные результаты: {len(results)} товаров")
         import traceback
         traceback.print_exc()
     
@@ -1597,17 +1605,26 @@ def main():
         print("ФИНАЛЬНОЕ СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
         print(f"{'='*80}")
         
-        if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-            print(f"\n✓ Сохранено: {len(results)} товаров")
-            print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
-        
-        # Сохраняем в Google Таблицы (если включено)
-        if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
-            if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
-                print(f"✓ Данные загружены в Google Таблицы")
-            else:
-                print(f"\n📊 Сохранение CSV для Google Таблиц (резервный способ)...")
-                save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
+        if len(results) > 0:
+            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+                print(f"\n✓ Сохранено в Excel: {len(results)} товаров")
+                print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
+            
+            # Сохраняем в Google Таблицы (если включено)
+            if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+                print(f"\n📊 Запись в Google Таблицы ({len(results)} товаров)...")
+                if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+                    print(f"✓ Данные загружены в Google Таблицы")
+                else:
+                    print(f"⚠ Не удалось сохранить в Google Таблицы")
+                    print(f"\n📊 Сохранение CSV для Google Таблиц (резервный способ)...")
+                    save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
+        else:
+            print(f"\n⚠ Нет данных для сохранения (results пустой)")
+            print(f"   Возможные причины:")
+            print(f"   - Парсинг не начался из-за ошибки")
+            print(f"   - Браузер закрылся до начала парсинга")
+            print(f"   - Ошибка в process_products_parallel")
         
         if driver:
             print(f"\n[Закрываю Chrome через 5 секунд...]")
