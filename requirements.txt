@@ -5,6 +5,13 @@ selenium
 webdriver-manager
 undetected-chromedriver
 lxml
+mitmproxy
+aiohttp
+loguru
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
 
 
 

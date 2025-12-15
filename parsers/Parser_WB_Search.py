@@ -105,8 +105,9 @@ TEST_PRODUCTS_COUNT = 50  # Количество товаров для тест�
 
 # Google Таблицы
 GOOGLE_SHEETS_ENABLED = False  # Включить запись в Google Таблицы
-GOOGLE_SHEET_URL = ""  # Публичная ссылка на Google Sheet (с правами редактирования для всех)
+GOOGLE_SHEET_URL = ""  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
 GOOGLE_SHEET_NAME = "Цены"  # Название листа в Google Sheet
+GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials (создается автоматически при первом запуске)
 
 
 def check_chrome_running():
@@ -1287,46 +1288,125 @@ def save_results_to_excel(results, output_file):
 
 def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
     """
-    Сохраняет результаты в Google Таблицы через публичную ссылку
-    Требуется: публичная ссылка на Google Sheet с правами редактирования для всех
+    Сохраняет результаты в Google Таблицы автоматически через gspread с OAuth2
     
-    Инструкция:
-    1. Создайте Google Sheet
-    2. Нажмите "Настроить доступ" → "Доступ для всех, у кого есть ссылка" → "Редактор"
-    3. Скопируйте ссылку и вставьте в GOOGLE_SHEET_URL
+    Инструкция по настройке (один раз):
+    1. Создайте Google Sheet и скопируйте ссылку
+    2. Вставьте ссылку в GOOGLE_SHEET_URL
+    3. Установите GOOGLE_SHEETS_ENABLED = True
+    4. При первом запуске откроется браузер для авторизации (один раз)
+    5. После авторизации создастся файл google_credentials.json
+    6. В дальнейшем авторизация не потребуется
     """
     if not GOOGLE_SHEETS_ENABLED or not sheet_url:
         return False
     
     try:
-        # Пробуем использовать gspread (требует установки: pip install gspread)
-        try:
-            import gspread
-            from google.oauth2.service_account import Credentials
-        except ImportError:
-            print(f"\n[!] Для записи в Google Таблицы установите: pip install gspread google-auth")
-            print(f"[!] Или используйте публичную ссылку на Google Sheet с правами редактирования")
-            return False
-        
+        import gspread
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.auth.transport.requests import Request
+        import pickle
+        import json
+    except ImportError:
+        print(f"\n[!] Для записи в Google Таблицы установите:")
+        print(f"    pip install gspread google-auth google-auth-oauthlib google-auth-httplib2")
+        return False
+    
+    try:
         # Извлекаем ID таблицы из URL
         # Формат: https://docs.google.com/spreadsheets/d/SHEET_ID/edit
         if '/d/' in sheet_url:
             sheet_id = sheet_url.split('/d/')[1].split('/')[0]
         else:
             print(f"[!] Неверный формат ссылки на Google Sheet")
+            print(f"    Пример: https://docs.google.com/spreadsheets/d/1ABC.../edit")
             return False
         
-        # Для публичного доступа используем анонимный клиент
-        # Но это работает только для чтения, для записи нужна авторизация
-        # Поэтому используем простой способ - экспорт в CSV и ручной импорт
-        print(f"\n[!] Для автоматической записи в Google Таблицы нужна авторизация")
-        print(f"[!] Используйте альтернативный способ: экспорт в CSV и ручной импорт")
-        print(f"[!] Или настройте OAuth2 авторизацию для gspread")
+        # OAuth2 настройки для Google Sheets API
+        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+        creds_file = os.path.join(PROJECT_ROOT, GOOGLE_CREDENTIALS_FILE)
+        token_file = os.path.join(PROJECT_ROOT, 'google_token.pickle')
         
-        return False
+        creds = None
+        
+        # Пробуем загрузить сохраненные credentials
+        if os.path.exists(token_file):
+            with open(token_file, 'rb') as token:
+                creds = pickle.load(token)
+        
+        # Если нет валидных credentials, запрашиваем авторизацию
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                # Создаем файл credentials.json если его нет
+                if not os.path.exists(creds_file):
+                    print(f"\n{'='*60}")
+                    print("НАСТРОЙКА GOOGLE SHEETS API")
+                    print(f"{'='*60}")
+                    print(f"\nДля автоматической записи в Google Таблицы нужна авторизация.")
+                    print(f"\nИнструкция:")
+                    print(f"1. Перейдите: https://console.cloud.google.com/")
+                    print(f"2. Создайте проект (или выберите существующий)")
+                    print(f"3. Включите Google Sheets API")
+                    print(f"4. Создайте OAuth 2.0 Client ID (Desktop app)")
+                    print(f"5. Скачайте credentials.json и сохраните как '{GOOGLE_CREDENTIALS_FILE}' в корне проекта")
+                    print(f"\nИли используйте упрощенный способ:")
+                    print(f"   - Создайте публичную Google Sheet с правами редактирования")
+                    print(f"   - Используйте CSV экспорт (уже работает)")
+                    print(f"\nПропускаю запись в Google Sheets...")
+                    return False
+                
+                flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+                creds = flow.run_local_server(port=0)
+            
+            # Сохраняем credentials для следующего раза
+            with open(token_file, 'wb') as token:
+                pickle.dump(creds, token)
+        
+        # Подключаемся к Google Sheets
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.open_by_key(sheet_id)
+        
+        # Получаем или создаем лист
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+        
+        # Очищаем лист (кроме заголовков)
+        if len(worksheet.get_all_values()) > 1:
+            worksheet.delete_rows(2, len(worksheet.get_all_values()))
+        
+        # Записываем заголовки если их нет
+        if len(worksheet.get_all_values()) == 0:
+            worksheet.append_row(["ссылка на товар", "артикул", "цена", "цена с картой"])
+        
+        # Записываем данные
+        print(f"\n📊 Запись в Google Таблицы...")
+        batch_size = 100  # Google Sheets API ограничение
+        for i in range(0, len(results), batch_size):
+            batch = results[i:i+batch_size]
+            rows = []
+            for result in batch:
+                rows.append([
+                    result['url'],
+                    result['article'],
+                    result['price'],
+                    result.get('price_with_card', 0)
+                ])
+            worksheet.append_rows(rows)
+            print(f"  Записано: {min(i+batch_size, len(results))}/{len(results)}")
+        
+        print(f"✓ Данные успешно загружены в Google Таблицы")
+        print(f"  Ссылка: {sheet_url}")
+        return True
         
     except Exception as e:
         print(f"\n[!] ОШИБКА при сохранении в Google Таблицы: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -1482,11 +1562,13 @@ def main():
             print(f"\n✓ Сохранено: {len(results)} товаров")
             print(f"✓ Файл: {OUTPUT_EXCEL_FILE}")
         
-        # Сохраняем CSV для Google Таблиц (самый простой способ без API ключа)
-        print(f"\n📊 Сохранение CSV для Google Таблиц...")
-        if save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE):
-            print(f"✓ CSV файл готов для импорта в Google Sheets")
-            print(f"  Инструкция: откройте Google Sheets → Файл → Импортировать → Загрузить → выберите CSV файл")
+        # Сохраняем в Google Таблицы (если включено)
+        if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+            if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+                print(f"✓ Данные загружены в Google Таблицы")
+            else:
+                print(f"\n📊 Сохранение CSV для Google Таблиц (резервный способ)...")
+                save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
         
         if driver:
             print(f"\n[Закрываю Chrome через 5 секунд...]")
