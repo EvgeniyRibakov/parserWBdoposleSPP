@@ -141,3 +141,5 @@ python parsers/Parser_WB_XPATH.py
 3. Версию Python (`python --version`)
 4. Что пробовал из решений выше
 
+
+
