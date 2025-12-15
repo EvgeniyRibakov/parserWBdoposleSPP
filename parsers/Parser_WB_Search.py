@@ -107,7 +107,8 @@ TEST_PRODUCTS_COUNT = 50  # Количество товаров для тест�
 GOOGLE_SHEETS_ENABLED = False  # Включить запись в Google Таблицы
 GOOGLE_SHEET_URL = ""  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
 GOOGLE_SHEET_NAME = "Цены"  # Название листа в Google Sheet
-GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials (создается автоматически при первом запуске)
+GOOGLE_USE_PUBLIC_ACCESS = True  # True = публичная ссылка (проще, но менее безопасно), False = OAuth2 (нужна настройка)
+GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials (только если GOOGLE_USE_PUBLIC_ACCESS = False)
 
 
 def check_chrome_running():
@@ -1323,51 +1324,65 @@ def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
             print(f"    Пример: https://docs.google.com/spreadsheets/d/1ABC.../edit")
             return False
         
-        # OAuth2 настройки для Google Sheets API
-        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        creds_file = os.path.join(PROJECT_ROOT, GOOGLE_CREDENTIALS_FILE)
-        token_file = os.path.join(PROJECT_ROOT, 'google_token.pickle')
-        
-        creds = None
-        
-        # Пробуем загрузить сохраненные credentials
-        if os.path.exists(token_file):
-            with open(token_file, 'rb') as token:
-                creds = pickle.load(token)
-        
-        # Если нет валидных credentials, запрашиваем авторизацию
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                # Создаем файл credentials.json если его нет
-                if not os.path.exists(creds_file):
-                    print(f"\n{'='*60}")
-                    print("НАСТРОЙКА GOOGLE SHEETS API")
-                    print(f"{'='*60}")
-                    print(f"\nДля автоматической записи в Google Таблицы нужна авторизация.")
-                    print(f"\nИнструкция:")
-                    print(f"1. Перейдите: https://console.cloud.google.com/")
-                    print(f"2. Создайте проект (или выберите существующий)")
-                    print(f"3. Включите Google Sheets API")
-                    print(f"4. Создайте OAuth 2.0 Client ID (Desktop app)")
-                    print(f"5. Скачайте credentials.json и сохраните как '{GOOGLE_CREDENTIALS_FILE}' в корне проекта")
-                    print(f"\nИли используйте упрощенный способ:")
-                    print(f"   - Создайте публичную Google Sheet с правами редактирования")
-                    print(f"   - Используйте CSV экспорт (уже работает)")
-                    print(f"\nПропускаю запись в Google Sheets...")
-                    return False
-                
-                flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
-                creds = flow.run_local_server(port=0)
-            
-            # Сохраняем credentials для следующего раза
-            with open(token_file, 'wb') as token:
-                pickle.dump(creds, token)
-        
         # Подключаемся к Google Sheets
-        gc = gspread.authorize(creds)
-        spreadsheet = gc.open_by_key(sheet_id)
+        if GOOGLE_USE_PUBLIC_ACCESS:
+            # Упрощенный способ: публичная ссылка с правами редактирования
+            # Инструкция: создайте Google Sheet → Настройки доступа → "Доступ для всех, у кого есть ссылка" → "Редактор"
+            print(f"\n📊 Подключение к Google Таблице через публичную ссылку...")
+            gc = gspread.service_account()  # Пробуем без авторизации (работает только для публичных таблиц)
+            try:
+                spreadsheet = gc.open_by_key(sheet_id)
+            except Exception as e:
+                print(f"[!] Не удалось подключиться через публичную ссылку: {e}")
+                print(f"[!] Убедитесь, что:")
+                print(f"    1. Google Sheet настроен как публичный с правами редактирования")
+                print(f"    2. Или установите GOOGLE_USE_PUBLIC_ACCESS = False и настройте OAuth2")
+                return False
+        else:
+            # OAuth2 авторизация (более безопасно)
+            SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+            creds_file = os.path.join(PROJECT_ROOT, GOOGLE_CREDENTIALS_FILE)
+            token_file = os.path.join(PROJECT_ROOT, 'google_token.pickle')
+            
+            creds = None
+            
+            # Пробуем загрузить сохраненные credentials
+            if os.path.exists(token_file):
+                with open(token_file, 'rb') as token:
+                    creds = pickle.load(token)
+            
+            # Если нет валидных credentials, запрашиваем авторизацию
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                else:
+                    # Создаем файл credentials.json если его нет
+                    if not os.path.exists(creds_file):
+                        print(f"\n{'='*60}")
+                        print("НАСТРОЙКА GOOGLE SHEETS API (OAuth2)")
+                        print(f"{'='*60}")
+                        print(f"\nДля автоматической записи в Google Таблицы нужна авторизация.")
+                        print(f"\nИнструкция:")
+                        print(f"1. Перейдите: https://console.cloud.google.com/")
+                        print(f"2. Создайте проект (или выберите существующий)")
+                        print(f"3. Включите Google Sheets API")
+                        print(f"4. Создайте OAuth 2.0 Client ID (Desktop app)")
+                        print(f"5. Скачайте credentials.json и сохраните как '{GOOGLE_CREDENTIALS_FILE}' в корне проекта")
+                        print(f"\nИли используйте упрощенный способ:")
+                        print(f"   - Установите GOOGLE_USE_PUBLIC_ACCESS = True")
+                        print(f"   - Создайте публичную Google Sheet с правами редактирования")
+                        print(f"\nПропускаю запись в Google Sheets...")
+                        return False
+                    
+                    flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                
+                # Сохраняем credentials для следующего раза
+                with open(token_file, 'wb') as token:
+                    pickle.dump(creds, token)
+            
+            gc = gspread.authorize(creds)
+            spreadsheet = gc.open_by_key(sheet_id)
         
         # Получаем или создаем лист
         try:
