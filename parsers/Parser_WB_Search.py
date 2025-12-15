@@ -1041,21 +1041,45 @@ def process_products_parallel(driver, products):
             
             # ФАЗА 1: Открыть все вкладки пакета
             print(f"\n[1/4] Открываю {len(batch)} вкладок...")
+            tabs = []
             for idx, product in enumerate(batch):
-                print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
-                driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
-                # Случайная задержка между открытием вкладок для избежания блокировки
-                delay = random.uniform(*DELAY_BETWEEN_TABS)
-                time.sleep(delay)
+                try:
+                    print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
+                    # Открываем вкладку и сохраняем её handle
+                    driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
+                    # Случайная задержка между открытием вкладок для избежания блокировки
+                    delay = random.uniform(*DELAY_BETWEEN_TABS)
+                    time.sleep(delay)
+                except Exception as e:
+                    print(f"  [{batch_start + idx + 1}/{total}] ⚠ Ошибка открытия вкладки: {e}")
             
             # ФАЗА 2: Ждем загрузки всех вкладок
             print(f"\n[2/4] Жду полной загрузки страниц...")
-            tabs = driver.window_handles[1:]  # Все вкладки кроме главной
+            time.sleep(2)  # Даем время на открытие вкладок
+            
+            # Получаем все вкладки кроме главной
+            all_handles = driver.window_handles
+            main_window = driver.current_window_handle
+            tabs = [h for h in all_handles if h != main_window]
             
             # Увеличена задержка для избежания блокировки WB
             time.sleep(5)
             
-            print(f"  ✓ Все {len(tabs)} вкладок загружены")
+            print(f"  ✓ Все {len(tabs)} вкладок загружены (всего окон: {len(all_handles)})")
+            
+            if len(tabs) == 0:
+                print(f"  ⚠ ВНИМАНИЕ: Не удалось открыть вкладки! Пробую альтернативный способ...")
+                # Альтернативный способ: открываем каждую ссылку напрямую
+                for idx, product in enumerate(batch):
+                    try:
+                        driver.execute_script(f"window.open('{product['url']}', '_blank');")
+                        time.sleep(0.5)
+                    except:
+                        pass
+                time.sleep(3)
+                all_handles = driver.window_handles
+                tabs = [h for h in all_handles if h != main_window]
+                print(f"  ✓ После повторной попытки: {len(tabs)} вкладок")
             
             # ФАЗА 3: Парсим цены из всех вкладок
             print(f"\n[3/4] Парсинг цен...")
@@ -1106,22 +1130,25 @@ def process_products_parallel(driver, products):
                     pass
             
             # Возвращаемся на главную вкладку
-            driver.switch_to.window(main_window)
+            try:
+                driver.switch_to.window(main_window)
+            except:
+                # Если главная вкладка закрыта, переключаемся на первую доступную
+                if driver.window_handles:
+                    driver.switch_to.window(driver.window_handles[0])
+                    main_window = driver.window_handles[0]
             
-            # Промежуточное сохранение
-            if SAVE_INTERMEDIATE_RESULTS and len(results) % SAVE_EVERY_N_PRODUCTS == 0:
+            # Промежуточное сохранение в Google Таблицы (каждые 10 товаров)
+            if SAVE_INTERMEDIATE_RESULTS and len(results) % SAVE_EVERY_N_PRODUCTS == 0 and len(results) > 0:
                 print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
-                if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-                    print(f"✓ Сохранено в Excel")
-                # Сохраняем в Google Таблицы (если включено)
                 if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
                     print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
                     if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
                         print(f"✓ Сохранено в Google Таблицы")
                     else:
                         print(f"⚠ Не удалось сохранить в Google Таблицы")
-                # Сохраняем CSV для Google Таблиц (резервный способ)
-                save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
+                else:
+                    print(f"⚠ Google Таблицы не настроены (GOOGLE_SHEETS_ENABLED = False или URL не указан)")
             
             # Задержка между пакетами
             if batch_start + PARALLEL_TABS < total:
