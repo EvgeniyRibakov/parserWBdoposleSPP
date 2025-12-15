@@ -100,8 +100,8 @@ SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров 
 PARALLEL_TABS = 10  # Количество параллельных вкладок
 DELAY_BETWEEN_TABS = (1.0, 2.0)  # Задержка между открытием каждой вкладки (мин, макс) в секундах
 DELAY_BETWEEN_BATCHES = (2, 4)  # Задержка между пакетами (мин, макс) в секундах
-TEST_MODE = True  # True = тест на 50 товарах, False = все товары
-TEST_PRODUCTS_COUNT = 50  # Количество товаров для тестирования
+TEST_MODE = False  # True = тест на N товарах, False = все товары
+TEST_PRODUCTS_COUNT = 50  # Количество товаров для тестирования (если TEST_MODE = True)
 
 # Google Таблицы
 GOOGLE_SHEETS_ENABLED = True  # Включить запись в Google Таблицы
