@@ -28,6 +28,7 @@ import random
 import re
 import subprocess
 import shutil
+import threading
 from selenium import webdriver
 
 # Настройка кодировки консоли для Windows
@@ -536,15 +537,49 @@ def setup_browser_driver():
                         try:
                             print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts)} запуска Chrome...")
                             print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
-                            print(f"[ЛОГ] Запускаю Chrome... (это может занять до 30 секунд)")
+                            print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
-                            driver = uc.Chrome(
-                                user_data_dir=TEMP_PROFILE_DIR,
-                                headless=HEADLESS_MODE,
-                                use_subprocess=attempt_config['use_subprocess'],
-                                version_main=attempt_config['version_main']
-                            )
+                            # Запускаем Chrome в отдельном потоке с таймаутом
+                            import threading
+                            driver_result = [None]
+                            driver_error = [None]
                             
+                            def start_chrome():
+                                try:
+                                    driver_obj = uc.Chrome(
+                                        user_data_dir=TEMP_PROFILE_DIR,
+                                        headless=HEADLESS_MODE,
+                                        use_subprocess=attempt_config['use_subprocess'],
+                                        version_main=attempt_config['version_main']
+                                    )
+                                    driver_result[0] = driver_obj
+                                except Exception as e:
+                                    driver_error[0] = e
+                            
+                            chrome_thread = threading.Thread(target=start_chrome, daemon=True)
+                            chrome_thread.start()
+                            chrome_thread.join(timeout=45)  # Таймаут 45 секунд
+                            
+                            if chrome_thread.is_alive():
+                                print(f"[ЛОГ] ⚠ Таймаут запуска Chrome (45 сек). Пробую следующую конфигурацию...")
+                                # Пытаемся убить зависший процесс Chrome
+                                try:
+                                    subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
+                                                 capture_output=True, timeout=5)
+                                except:
+                                    pass
+                                time.sleep(2)
+                                continue
+                            
+                            if driver_error[0]:
+                                raise driver_error[0]
+                            
+                            if not driver_result[0]:
+                                print(f"[ЛОГ] ⚠ Chrome не запустился. Пробую следующую конфигурацию...")
+                                time.sleep(2)
+                                continue
+                            
+                            driver = driver_result[0]
                             print(f"[ЛОГ] Chrome процесс запущен, проверяю работоспособность...")
                             
                             # Проверяем что драйвер работает
@@ -624,14 +659,47 @@ def setup_browser_driver():
                         try:
                             print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts_no_profile)} запуска Chrome...")
                             print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
-                            print(f"[ЛОГ] Запускаю Chrome... (это может занять до 30 секунд)")
+                            print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
-                            driver = uc.Chrome(
-                                headless=HEADLESS_MODE,
-                                use_subprocess=attempt_config['use_subprocess'],
-                                version_main=attempt_config['version_main']
-                            )
+                            # Запускаем Chrome в отдельном потоке с таймаутом
+                            driver_result = [None]
+                            driver_error = [None]
                             
+                            def start_chrome():
+                                try:
+                                    driver_obj = uc.Chrome(
+                                        headless=HEADLESS_MODE,
+                                        use_subprocess=attempt_config['use_subprocess'],
+                                        version_main=attempt_config['version_main']
+                                    )
+                                    driver_result[0] = driver_obj
+                                except Exception as e:
+                                    driver_error[0] = e
+                            
+                            chrome_thread = threading.Thread(target=start_chrome, daemon=True)
+                            chrome_thread.start()
+                            chrome_thread.join(timeout=45)  # Таймаут 45 секунд
+                            
+                            if chrome_thread.is_alive():
+                                print(f"[ЛОГ] ⚠ Таймаут запуска Chrome (45 сек). Пробую следующую конфигурацию...")
+                                # Пытаемся убить зависший процесс Chrome
+                                try:
+                                    subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
+                                                 capture_output=True, timeout=5)
+                                except:
+                                    pass
+                                time.sleep(2)
+                                continue
+                            
+                            if driver_error[0]:
+                                raise driver_error[0]
+                            
+                            if not driver_result[0]:
+                                print(f"[ЛОГ] ⚠ Chrome не запустился. Пробую следующую конфигурацию...")
+                                time.sleep(2)
+                                continue
+                            
+                            driver = driver_result[0]
                             print(f"[ЛОГ] Chrome процесс запущен, проверяю работоспособность...")
                             
                             # Проверяем что драйвер работает
