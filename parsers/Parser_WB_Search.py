@@ -1155,14 +1155,23 @@ def process_products_parallel(driver, products):
                 except:
                     pass
             
-            # Возвращаемся на главную вкладку
+            # Возвращаемся на главную вкладку и обновляем main_window
             try:
-                driver.switch_to.window(main_window)
-            except:
-                # Если главная вкладка закрыта, переключаемся на первую доступную
+                # Обновляем main_window - берем первую доступную вкладку
                 if driver.window_handles:
-                    driver.switch_to.window(driver.window_handles[0])
                     main_window = driver.window_handles[0]
+                    driver.switch_to.window(main_window)
+                else:
+                    print(f"  ⚠ Все вкладки закрыты!")
+            except Exception as e:
+                print(f"  ⚠ Ошибка переключения на главную вкладку: {e}")
+                # Пробуем получить любую доступную вкладку
+                try:
+                    if driver.window_handles:
+                        main_window = driver.window_handles[0]
+                        driver.switch_to.window(main_window)
+                except:
+                    pass
             
             # Дополнительная проверка сохранения в конце пакета (если накопилось >= 10 товаров с последнего сохранения)
             if SAVE_INTERMEDIATE_RESULTS and len(results) - last_saved_count >= SAVE_EVERY_N_PRODUCTS:
@@ -1638,25 +1647,6 @@ def main():
                 print(f"\n[!] Прервано пользователем")
                 driver.quit()
                 return
-            
-            # Проверяем что браузер еще жив после авторизации
-            try:
-                driver.current_url  # Простая проверка работоспособности
-                print(f"[ЛОГ] ✓ Браузер активен, продолжаю парсинг...")
-            except (InvalidSessionIdException, Exception) as e:
-                print(f"\n[!] ОШИБКА: Браузер закрыт после авторизации: {e}")
-                print(f"    Перезапускаю браузер...")
-                try:
-                    driver.quit()
-                except:
-                    pass
-                # Перезапускаем браузер
-                driver = setup_browser_driver()
-                if not driver:
-                    print(f"\n[!] Не удалось перезапустить браузер!")
-                    wb.close()
-                    return
-                print(f"[ЛОГ] ✓ Браузер перезапущен")
         elif WAIT_FOR_MANUAL_LOGIN and HEADLESS_MODE:
             print(f"\n⚠️  ВНИМАНИЕ: Headless режим активен!")
             print(f"   Авторизация через браузер невозможна (браузер не виден).")
