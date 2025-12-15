@@ -22,12 +22,20 @@
 """
 
 import os
+import sys
 import time
 import random
 import re
 import subprocess
 import shutil
 from selenium import webdriver
+
+# Настройка кодировки консоли для Windows
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except:
+        pass
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.edge.service import Service as EdgeService
@@ -509,86 +517,198 @@ def setup_browser_driver():
                         print(f"[ЛОГ] Пробую запустить несмотря на это...")
                         time.sleep(2)  # Даем время на освобождение ресурсов
                     
-                    try:
-                        driver = uc.Chrome(
-                            user_data_dir=TEMP_PROFILE_DIR,
-                            headless=HEADLESS_MODE,
-                            use_subprocess=use_subprocess,
-                            version_main=143
-                        )
-                        print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
-                    except Exception as e:
-                        error_msg = str(e)
-                        print(f"[ЛОГ] Первая попытка не удалась: {error_msg}")
-                        
-                        # Если ошибка связана с подключением, пробуем еще раз с задержкой
-                        if "cannot connect" in error_msg.lower() or "not reachable" in error_msg.lower():
-                            print(f"[ЛОГ] Ошибка подключения. Очищаю lock-файлы и пробую еще раз...")
-                            cleanup_profile_locks(TEMP_PROFILE_DIR)
-                            time.sleep(3)
+                    # Пробуем несколько конфигураций для надежности
+                    attempts = [
+                        {'use_subprocess': use_subprocess, 'version_main': 143},
+                        {'use_subprocess': True, 'version_main': 143},
+                        {'use_subprocess': True, 'version_main': None},  # Автоопределение версии
+                    ]
+                    
+                    driver = None
+                    for attempt_num, attempt_config in enumerate(attempts, 1):
+                        try:
+                            print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts)} запуска Chrome...")
+                            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
                             
-                            try:
-                                driver = uc.Chrome(
-                                    user_data_dir=TEMP_PROFILE_DIR,
-                                    headless=HEADLESS_MODE,
-                                    use_subprocess=True,  # Всегда True для повторной попытки
-                                    version_main=143
-                                )
-                                print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
-                            except Exception as e2:
-                                print(f"[ЛОГ] Повторная попытка также не удалась: {e2}")
-                                raise
-                        # Пробуем с use_subprocess=True если была False
-                        elif not use_subprocess:
-                            print(f"[ЛОГ] Пробую с use_subprocess=True...")
                             driver = uc.Chrome(
                                 user_data_dir=TEMP_PROFILE_DIR,
                                 headless=HEADLESS_MODE,
-                                use_subprocess=True,
-                                version_main=143
+                                use_subprocess=attempt_config['use_subprocess'],
+                                version_main=attempt_config['version_main']
                             )
-                            print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
-                        else:
-                            raise
+                            
+                            # Проверяем что драйвер работает
+                            try:
+                                driver.current_url  # Простая проверка работоспособности
+                                print(f"[ЛОГ] ✓ Chrome запущен с профилем парсера (данные из Profile 4)")
+                                break  # Успешно запустили, выходим из цикла
+                            except Exception as check_error:
+                                print(f"[ЛОГ] ⚠ Драйвер создан, но не отвечает: {check_error}")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                driver = None
+                                if attempt_num < len(attempts):
+                                    print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    raise Exception("Драйвер не отвечает после всех попыток")
+                                    
+                        except (ConnectionResetError, ConnectionError, ConnectionAbortedError) as conn_error:
+                            error_msg = str(conn_error)
+                            print(f"[ЛОГ] ✗ Попытка {attempt_num} не удалась: {type(conn_error).__name__}: {error_msg[:200]}")
+                            
+                            if attempt_num < len(attempts):
+                                print(f"[ЛОГ] Ошибка подключения. Очищаю lock-файлы и пробую еще раз...")
+                                cleanup_profile_locks(TEMP_PROFILE_DIR)
+                                time.sleep(3)
+                                continue
+                            else:
+                                raise
+                                
+                        except Exception as e:
+                            error_msg = str(e)
+                            print(f"[ЛОГ] ✗ Попытка {attempt_num} не удалась: {error_msg[:200]}")
+                            
+                            # Если ошибка связана с подключением, пробуем еще раз с задержкой
+                            if any(keyword in error_msg.lower() for keyword in ["cannot connect", "not reachable", "connection", "reset", "refused"]):
+                                if attempt_num < len(attempts):
+                                    print(f"[ЛОГ] Ошибка подключения. Очищаю lock-файлы и пробую еще раз...")
+                                    cleanup_profile_locks(TEMP_PROFILE_DIR)
+                                    time.sleep(3)
+                                    continue
+                                else:
+                                    raise
+                            elif attempt_num < len(attempts):
+                                print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                time.sleep(2)
+                                continue
+                            else:
+                                raise
+                    
+                    if driver is None:
+                        raise Exception("Не удалось запустить Chrome после всех попыток")
                 else:
                     mode_text = "headless (фоновый)" if HEADLESS_MODE else "видимый"
                     print(f"[ЛОГ] Запуск Chrome БЕЗ профиля (временный)...")
                     print(f"[ЛОГ] Режим: {mode_text}")
                     
-                    # Для headless режима используем use_subprocess=True для стабильности
-                    use_subprocess = HEADLESS_MODE
+                    # Пробуем несколько конфигураций для надежности
+                    attempts_no_profile = [
+                        {'use_subprocess': HEADLESS_MODE, 'version_main': 143},
+                        {'use_subprocess': True, 'version_main': 143},
+                        {'use_subprocess': True, 'version_main': None},  # Автоопределение версии
+                    ]
                     
-                    try:
-                        driver = uc.Chrome(
-                            headless=HEADLESS_MODE,
-                            use_subprocess=use_subprocess,
-                            version_main=143
-                        )
-                        print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
-                    except Exception as e:
-                        print(f"[ЛОГ] Первая попытка не удалась: {e}")
-                        # Пробуем с use_subprocess=True если была False
-                        if not use_subprocess:
-                            print(f"[ЛОГ] Пробую с use_subprocess=True...")
+                    driver = None
+                    for attempt_num, attempt_config in enumerate(attempts_no_profile, 1):
+                        try:
+                            print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts_no_profile)} запуска Chrome...")
+                            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
+                            
                             driver = uc.Chrome(
                                 headless=HEADLESS_MODE,
-                                use_subprocess=True,
-                                version_main=143
+                                use_subprocess=attempt_config['use_subprocess'],
+                                version_main=attempt_config['version_main']
                             )
-                            print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
-                        else:
-                            raise
+                            
+                            # Проверяем что драйвер работает
+                            try:
+                                driver.current_url  # Простая проверка работоспособности
+                                print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
+                                break  # Успешно запустили, выходим из цикла
+                            except Exception as check_error:
+                                print(f"[ЛОГ] ⚠ Драйвер создан, но не отвечает: {check_error}")
+                                try:
+                                    driver.quit()
+                                except:
+                                    pass
+                                driver = None
+                                if attempt_num < len(attempts_no_profile):
+                                    print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    raise Exception("Драйвер не отвечает после всех попыток")
+                                    
+                        except (ConnectionResetError, ConnectionError, ConnectionAbortedError) as conn_error:
+                            error_msg = str(conn_error)
+                            print(f"[ЛОГ] ✗ Попытка {attempt_num} не удалась: {type(conn_error).__name__}: {error_msg[:200]}")
+                            
+                            if attempt_num < len(attempts_no_profile):
+                                print(f"[ЛОГ] Ошибка подключения. Пробую еще раз...")
+                                time.sleep(3)
+                                continue
+                            else:
+                                raise
+                                
+                        except Exception as e:
+                            error_msg = str(e)
+                            print(f"[ЛОГ] ✗ Попытка {attempt_num} не удалась: {error_msg[:200]}")
+                            
+                            # Если ошибка связана с подключением, пробуем еще раз с задержкой
+                            if any(keyword in error_msg.lower() for keyword in ["cannot connect", "not reachable", "connection", "reset", "refused"]):
+                                if attempt_num < len(attempts_no_profile):
+                                    print(f"[ЛОГ] Ошибка подключения. Пробую еще раз...")
+                                    time.sleep(3)
+                                    continue
+                                else:
+                                    raise
+                            elif attempt_num < len(attempts_no_profile):
+                                print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                time.sleep(2)
+                                continue
+                            else:
+                                raise
+                    
+                    if driver is None:
+                        raise Exception("Не удалось запустить Chrome после всех попыток")
+            
+            # Проверяем что driver создан
+            if driver is None:
+                raise Exception("Драйвер не был создан")
             
             print(f"[ЛОГ] ✓ WebDriver создан успешно")
-            print(f"[ЛОГ] Session ID: {driver.session_id}")
-            print(f"[ЛОГ] Capabilities: {driver.capabilities}")
+            try:
+                print(f"[ЛОГ] Session ID: {driver.session_id}")
+                print(f"[ЛОГ] Capabilities: {driver.capabilities}")
+            except Exception as e:
+                print(f"[ЛОГ] ⚠ Не удалось получить информацию о сессии: {e}")
             
             # Скрываем webdriver
-            driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
-            })
+            try:
+                driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+                    "userAgent": driver.execute_script("return navigator.userAgent").replace('Headless', '')
+                })
+            except Exception as e:
+                print(f"[ЛОГ] ⚠ Не удалось установить User-Agent: {e}")
             
             return driver
+            
+        except (ConnectionResetError, ConnectionError, ConnectionAbortedError) as conn_error:
+            import traceback
+            print(f"\n{'='*60}")
+            print(f"[ОШИБКА] Ошибка подключения к Chrome")
+            print(f"{'='*60}")
+            print(f"[ЛОГ] Тип: {type(conn_error).__name__}")
+            print(f"[ЛОГ] Сообщение: {str(conn_error)}")
+            print(f"{'='*60}\n")
+            
+            print(f"\n💡 ВОЗМОЖНЫЕ ПРИЧИНЫ:")
+            print(f"   1. Chrome запустился, но соединение было разорвано")
+            print(f"   2. Антивирус или файрвол блокирует соединение")
+            print(f"   3. Порт 9223 (remote-debugging-port) занят другим процессом")
+            print(f"   4. Профиль поврежден или имеет проблемы с правами доступа")
+            print(f"\n💡 РЕШЕНИЯ:")
+            print(f"   1. Закройте ВСЕ окна Chrome: taskkill /F /IM chrome.exe")
+            print(f"   2. Подождите 10 секунд и попробуйте снова")
+            print(f"   3. Перезагрузите компьютер (если Chrome завис)")
+            print(f"   4. Проверьте антивирус (может блокировать)")
+            print(f"   5. Попробуйте запустить Chrome вручную и закройте его")
+            print(f"   6. Удалите папку chrome_parser_profile и дайте парсеру создать новую")
+            return None
             
         except Exception as e:
             import traceback
@@ -608,8 +728,10 @@ def setup_browser_driver():
             print(f"   4. Антивирус блокирует запуск Chrome через Selenium")
             print(f"\n💡 РЕШЕНИЯ:")
             print(f"   1. Закройте ВСЕ окна Chrome: taskkill /F /IM chrome.exe")
-            print(f"   2. Попробуйте другой профиль (измените CHROME_PROFILE_NAME)")
-            print(f"   3. Используйте Edge: BROWSER_TYPE = 'edge'")
+            print(f"   2. Подождите 10 секунд и попробуйте снова")
+            print(f"   3. Попробуйте другой профиль (измените CHROME_PROFILE_NAME)")
+            print(f"   4. Используйте Edge: BROWSER_TYPE = 'edge'")
+            print(f"   5. Удалите папку chrome_parser_profile и дайте парсеру создать новую")
             return None
 
 
