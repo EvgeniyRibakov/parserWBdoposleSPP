@@ -105,9 +105,9 @@ TEST_PRODUCTS_COUNT = 50  # Количество товаров для тест�
 
 # Google Таблицы
 GOOGLE_SHEETS_ENABLED = False  # Включить запись в Google Таблицы
-GOOGLE_SHEET_URL = ""  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
-GOOGLE_SHEET_NAME = "Цены"  # Название листа в Google Sheet
-GOOGLE_SERVICE_ACCOUNT_FILE = "google_service_account.json"  # JSON файл Service Account (самый простой способ)
+GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1fbMPHE43ikYM90gcSVk_kcUItjzo-OsYI3T25yOJgQU/edit"  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
+GOOGLE_SHEET_NAME = "Лист1"  # Название листа в Google Sheet
+GOOGLE_SERVICE_ACCOUNT_FILE = "google-credentials.json"  # JSON файл Service Account (самый простой способ)
 # Альтернатива: GOOGLE_CREDENTIALS_FILE для OAuth2 (требует один раз авторизоваться через браузер)
 GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials
 
@@ -1106,7 +1106,10 @@ def process_products_parallel(driver, products):
             print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
             if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
                 print(f"✓ Сохранено в Excel")
-            # Сохраняем CSV для Google Таблиц
+            # Сохраняем в Google Таблицы (если включено)
+            if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+                save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME)
+            # Сохраняем CSV для Google Таблиц (резервный способ)
             save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
         
         # Задержка между пакетами
