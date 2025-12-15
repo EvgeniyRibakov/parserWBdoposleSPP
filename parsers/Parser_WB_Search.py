@@ -1307,7 +1307,12 @@ def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
     5. После авторизации создастся файл google_credentials.json
     6. В дальнейшем авторизация не потребуется
     """
-    if not GOOGLE_SHEETS_ENABLED or not sheet_url:
+    if not GOOGLE_SHEETS_ENABLED:
+        print(f"  ⚠ Google Sheets отключен (GOOGLE_SHEETS_ENABLED = False)")
+        return False
+    
+    if not sheet_url:
+        print(f"  ⚠ Google Sheet URL не указан (GOOGLE_SHEET_URL пустой)")
         return False
     
     try:
