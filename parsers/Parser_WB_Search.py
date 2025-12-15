@@ -540,7 +540,6 @@ def setup_browser_driver():
                             print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
                             # Запускаем Chrome в отдельном потоке с таймаутом
-                            import threading
                             driver_result = [None]
                             driver_error = [None]
                             
