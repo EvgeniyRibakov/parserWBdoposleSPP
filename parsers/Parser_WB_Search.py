@@ -104,7 +104,7 @@ TEST_MODE = True  # True = тест на 50 товарах, False = все то�
 TEST_PRODUCTS_COUNT = 50  # Количество товаров для тестирования
 
 # Google Таблицы
-GOOGLE_SHEETS_ENABLED = False  # Включить запись в Google Таблицы
+GOOGLE_SHEETS_ENABLED = True  # Включить запись в Google Таблицы
 GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1fbMPHE43ikYM90gcSVk_kcUItjzo-OsYI3T25yOJgQU/edit"  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
 GOOGLE_SHEET_NAME = "Лист1"  # Название листа в Google Sheet
 GOOGLE_SERVICE_ACCOUNT_FILE = "google-credentials.json"  # JSON файл Service Account (самый простой способ)
