@@ -545,11 +545,22 @@ def setup_browser_driver():
                             
                             def start_chrome():
                                 try:
+                                    # Создаем опции для отключения прокси и других сетевых настроек
+                                    options = ChromeOptions()
+                                    # Отключаем прокси (если был настроен хост браузера)
+                                    options.add_argument("--no-proxy-server")
+                                    options.add_argument("--proxy-server=direct://")
+                                    options.add_argument("--proxy-bypass-list=*")
+                                    # Дополнительные опции для стабильности
+                                    options.add_argument("--disable-extensions")
+                                    options.add_argument("--disable-plugins")
+                                    
                                     driver_obj = uc.Chrome(
                                         user_data_dir=TEMP_PROFILE_DIR,
                                         headless=HEADLESS_MODE,
                                         use_subprocess=attempt_config['use_subprocess'],
-                                        version_main=attempt_config['version_main']
+                                        version_main=attempt_config['version_main'],
+                                        options=options  # Передаем опции для отключения прокси
                                     )
                                     driver_result[0] = driver_obj
                                 except Exception as e:
@@ -666,10 +677,21 @@ def setup_browser_driver():
                             
                             def start_chrome():
                                 try:
+                                    # Создаем опции для отключения прокси и других сетевых настроек
+                                    options = ChromeOptions()
+                                    # Отключаем прокси (если был настроен хост браузера)
+                                    options.add_argument("--no-proxy-server")
+                                    options.add_argument("--proxy-server=direct://")
+                                    options.add_argument("--proxy-bypass-list=*")
+                                    # Дополнительные опции для стабильности
+                                    options.add_argument("--disable-extensions")
+                                    options.add_argument("--disable-plugins")
+                                    
                                     driver_obj = uc.Chrome(
                                         headless=HEADLESS_MODE,
                                         use_subprocess=attempt_config['use_subprocess'],
-                                        version_main=attempt_config['version_main']
+                                        version_main=attempt_config['version_main'],
+                                        options=options  # Передаем опции для отключения прокси
                                     )
                                     driver_result[0] = driver_obj
                                 except Exception as e:
