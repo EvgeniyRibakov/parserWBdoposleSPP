@@ -97,7 +97,7 @@ SAVE_INTERMEDIATE_RESULTS = True  # Сохранять результаты ка
 SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров (0 = только в конце)
 
 # Параллельная обработка товаров
-PARALLEL_TABS = 5  # Количество параллельных вкладок (уменьшено для избежания блокировки WB)
+PARALLEL_TABS = 15  # Количество параллельных вкладок
 DELAY_BETWEEN_TABS = (1.0, 2.0)  # Задержка между открытием каждой вкладки (мин, макс) в секундах
 DELAY_BETWEEN_BATCHES = (2, 4)  # Задержка между пакетами (мин, макс) в секундах
 TEST_MODE = True  # True = тест на 50 товарах, False = все товары
@@ -1596,5 +1596,38 @@ def main():
     print(f"{'='*80}\n")
 
 
+def test_google_sheets():
+    """Тестовая функция для проверки записи в Google Таблицы"""
+    if not GOOGLE_SHEETS_ENABLED or not GOOGLE_SHEET_URL:
+        print("\n[!] Google Sheets не настроен. Установите GOOGLE_SHEETS_ENABLED = True и GOOGLE_SHEET_URL")
+        return
+    
+    print("\n" + "="*80)
+    print("ТЕСТ ЗАПИСИ В GOOGLE ТАБЛИЦЫ")
+    print("="*80)
+    
+    # Создаем тестовые данные
+    test_results = [{
+        'url': 'https://test.com',
+        'article': 'ПРИВЕТ',
+        'price': 12345,
+        'price_with_card': 0
+    }]
+    
+    print(f"\n📊 Пробую записать 'привет' в Google Таблицы...")
+    print(f"   URL: {GOOGLE_SHEET_URL}")
+    print(f"   Лист: {GOOGLE_SHEET_NAME}")
+    
+    if save_results_to_google_sheets(test_results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+        print(f"\n✓ ТЕСТ УСПЕШЕН! Проверьте Google Таблицу - там должно быть 'привет'")
+    else:
+        print(f"\n✗ ТЕСТ НЕ УДАЛСЯ. Проверьте настройки и файл google-credentials.json")
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    # Если запущен с аргументом --test-google, запускаем тест
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-google":
+        test_google_sheets()
+    else:
+        main()
