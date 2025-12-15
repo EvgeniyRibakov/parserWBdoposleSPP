@@ -761,7 +761,7 @@ def parse_price_from_current_page(driver, article):
         try:
             sold_out_element = driver.find_element(By.CSS_SELECTOR, "h2[class*='soldOutProduct']")
             print(f"  [{article}] ⚠ Товар недоступен: {sold_out_element.text}")
-            return 0
+            return {'price': 0, 'price_with_card': 0}
         except:
             pass  # Элемент не найден - товар в наличии
         
@@ -772,7 +772,7 @@ def parse_price_from_current_page(driver, article):
         for keyword in unavailable_keywords:
             if keyword in page_text:
                 print(f"  [{article}] ⚠ Товар недоступен: '{keyword}'")
-                return {'price': 0, 'price_with_card': None}
+                return {'price': 0, 'price_with_card': 0}
         
         # Кликаем на кнопку кошелька (если есть)
         try:
@@ -806,7 +806,8 @@ def parse_price_from_current_page(driver, article):
         price = None
         price_with_card = None
         
-        # Сначала ищем обычную цену
+        # Ищем обе цены одновременно для ускорения
+        # Сначала пробуем найти обычную цену (приоритет)
         for by, selector in price_selectors:
             try:
                 price_elem = WebDriverWait(driver, 8).until(
@@ -820,7 +821,7 @@ def parse_price_from_current_page(driver, article):
             except:
                 continue
         
-        # Затем ищем цену с картой
+        # Параллельно ищем цену с картой (не блокируем поиск обычной цены)
         for by, selector in price_with_card_selectors:
             try:
                 price_card_elem = driver.find_element(by, selector)
@@ -867,12 +868,13 @@ def parse_price_from_current_page(driver, article):
         
         if not price:
             print(f"  [{article}] ✗ Обычная цена не найдена даже после повторной попытки")
-            return {'price': 0, 'price_with_card': None}
+            return {'price': 0, 'price_with_card': 0}
         
         # Возвращаем словарь с обеими ценами
+        # Если цена с картой не найдена - возвращаем 0
         return {
             'price': price,
-            'price_with_card': price_with_card if price_with_card else None
+            'price_with_card': price_with_card if price_with_card else 0
         }
     
     except Exception as e:
@@ -928,11 +930,11 @@ def process_products_parallel(driver, products):
                 
                 # Если captcha - пропускаем
                 if price_data is None:
-                    price_data = {'price': 0, 'price_with_card': None}
+                    price_data = {'price': 0, 'price_with_card': 0}
                 
                 # Если вернулось число (старый формат), преобразуем в словарь
                 if isinstance(price_data, (int, float)):
-                    price_data = {'price': int(price_data), 'price_with_card': None}
+                    price_data = {'price': int(price_data), 'price_with_card': 0}
                 
                 results.append({
                     'url': product['url'],
@@ -942,8 +944,8 @@ def process_products_parallel(driver, products):
                 })
                 
                 price = price_data['price']
-                price_card = price_data.get('price_with_card')
-                if price_card:
+                price_card = price_data.get('price_with_card', 0)
+                if price_card and price_card > 0:
                     status = f"{price} ₽ / {price_card} ₽ (с картой)"
                 else:
                     status = f"{price} ₽" if price > 0 else "недоступен" if price == 0 else "ошибка"
@@ -955,7 +957,7 @@ def process_products_parallel(driver, products):
                     'url': product['url'],
                     'article': product['article'],
                     'price': 0,
-                    'price_with_card': None
+                    'price_with_card': 0
                 })
         
         # ФАЗА 4: Закрыть все вкладки пакета
@@ -1139,7 +1141,7 @@ def save_results_to_excel(results, output_file):
                 result['url'],
                 result['article'],
                 result['price'],
-                result.get('price_with_card', '')  # Пустая строка если цена с картой не найдена
+                result.get('price_with_card', 0)  # 0 если цена с картой не найдена
             ])
         
         # Автофильтр
