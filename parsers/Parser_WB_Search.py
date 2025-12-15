@@ -626,6 +626,9 @@ def parse_price_from_current_page(driver, article):
     Возвращает цену или 0 если товара нет в наличии
     """
     try:
+        # Даем странице время полностью загрузиться перед началом парсинга
+        time.sleep(1)
+        
         # Проверяем на captcha
         if "Почти готово" in driver.title or "captcha" in driver.page_source.lower():
             print(f"  [{article}] ⚠ Captcha обнаружена!")
@@ -650,11 +653,11 @@ def parse_price_from_current_page(driver, article):
         
         # Кликаем на кнопку кошелька (если есть)
         try:
-            wallet_button = WebDriverWait(driver, 2).until(
+            wallet_button = WebDriverWait(driver, 3).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[class*='priceBlockWalletPrice']"))
             )
             wallet_button.click()
-            time.sleep(0.5)  # Ждем появления финальной цены
+            time.sleep(1.5)  # Увеличена задержка для появления финальной цены
         except:
             pass  # Кнопки кошелька нет - это нормально
         
@@ -674,7 +677,7 @@ def parse_price_from_current_page(driver, article):
         price = None
         for by, selector in price_selectors:
             try:
-                price_elem = WebDriverWait(driver, 5).until(
+                price_elem = WebDriverWait(driver, 8).until(
                     EC.presence_of_element_located((by, selector))
                 )
                 price_text = price_elem.text.strip()
@@ -687,13 +690,15 @@ def parse_price_from_current_page(driver, article):
         
         if not price:
             # Если цена не найдена, подождем еще и попробуем снова
-            print(f"  [{article}] ⚠ Цена не найдена с первой попытки, жду еще 1.5 секунды...")
-            time.sleep(1.5)
+            print(f"  [{article}] ⚠ Цена не найдена с первой попытки, жду еще 3 секунды...")
+            time.sleep(3)
             
-            # Повторная попытка найти цену
+            # Повторная попытка найти цену с увеличенным таймаутом
             for by, selector in price_selectors:
                 try:
-                    price_elem = driver.find_element(by, selector)
+                    price_elem = WebDriverWait(driver, 8).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
                     price_text = price_elem.text.strip()
                     price_num = re.sub(r'[^\d]', '', price_text)
                     if price_num:
