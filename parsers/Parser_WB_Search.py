@@ -1034,100 +1034,100 @@ def process_products_parallel(driver, products):
             batch = products[batch_start : batch_start + PARALLEL_TABS]
             batch_num = batch_start // PARALLEL_TABS + 1
             total_batches = (total + PARALLEL_TABS - 1) // PARALLEL_TABS
-        
-        print(f"\n{'─'*80}")
-        print(f"📦 ПАКЕТ {batch_num}/{total_batches} ({len(batch)} товаров)")
-        print(f"{'─'*80}")
-        
-        # ФАЗА 1: Открыть все вкладки пакета
-        print(f"\n[1/4] Открываю {len(batch)} вкладок...")
-        for idx, product in enumerate(batch):
-            print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
-            driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
-            # Случайная задержка между открытием вкладок для избежания блокировки
-            delay = random.uniform(*DELAY_BETWEEN_TABS)
-            time.sleep(delay)
-        
-        # ФАЗА 2: Ждем загрузки всех вкладок
-        print(f"\n[2/4] Жду полной загрузки страниц...")
-        tabs = driver.window_handles[1:]  # Все вкладки кроме главной
-        
-        # Увеличена задержка для избежания блокировки WB
-        time.sleep(5)
-        
-        print(f"  ✓ Все {len(tabs)} вкладок загружены")
-        
-        # ФАЗА 3: Парсим цены из всех вкладок
-        print(f"\n[3/4] Парсинг цен...")
-        for idx, (tab_handle, product) in enumerate(zip(tabs, batch)):
-            try:
-                driver.switch_to.window(tab_handle)
-                price_data = parse_price_from_current_page(driver, product['article'])
-                
-                # Если captcha - пропускаем
-                if price_data is None:
-                    price_data = {'price': 0, 'price_with_card': 0}
-                
-                # Если вернулось число (старый формат), преобразуем в словарь
-                if isinstance(price_data, (int, float)):
-                    price_data = {'price': int(price_data), 'price_with_card': 0}
-                
-                results.append({
-                    'url': product['url'],
-                    'article': product['article'],
-                    'price': price_data['price'],
-                    'price_with_card': price_data.get('price_with_card')
-                })
-                
-                price = price_data['price']
-                price_card = price_data.get('price_with_card', 0)
-                if price_card and price_card > 0:
-                    status = f"{price} ₽ / {price_card} ₽ (с картой)"
-                else:
-                    status = f"{price} ₽" if price > 0 else "недоступен" if price == 0 else "ошибка"
-                print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: {status}")
             
-            except Exception as e:
-                print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: ✗ ошибка - {e}")
-                results.append({
-                    'url': product['url'],
-                    'article': product['article'],
-                    'price': 0,
-                    'price_with_card': 0
-                })
-        
-        # ФАЗА 4: Закрыть все вкладки пакета
-        print(f"\n[4/4] Закрываю вкладки...")
-        for tab_handle in tabs:
-            try:
-                driver.switch_to.window(tab_handle)
-                driver.close()
-            except:
-                pass
-        
-        # Возвращаемся на главную вкладку
-        driver.switch_to.window(main_window)
-        
-        # Промежуточное сохранение
-        if SAVE_INTERMEDIATE_RESULTS and len(results) % SAVE_EVERY_N_PRODUCTS == 0:
-            print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
-            if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
-                print(f"✓ Сохранено в Excel")
-            # Сохраняем в Google Таблицы (если включено)
-            if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
-                print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
-                if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
-                    print(f"✓ Сохранено в Google Таблицы")
-                else:
-                    print(f"⚠ Не удалось сохранить в Google Таблицы")
-            # Сохраняем CSV для Google Таблиц (резервный способ)
-            save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
-        
-        # Задержка между пакетами
-        if batch_start + PARALLEL_TABS < total:
-            delay = random.uniform(*DELAY_BETWEEN_BATCHES)
-            print(f"\n⏸ Пауза {delay:.1f}с перед следующим пакетом...\n")
-            time.sleep(delay)
+            print(f"\n{'─'*80}")
+            print(f"📦 ПАКЕТ {batch_num}/{total_batches} ({len(batch)} товаров)")
+            print(f"{'─'*80}")
+            
+            # ФАЗА 1: Открыть все вкладки пакета
+            print(f"\n[1/4] Открываю {len(batch)} вкладок...")
+            for idx, product in enumerate(batch):
+                print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
+                driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
+                # Случайная задержка между открытием вкладок для избежания блокировки
+                delay = random.uniform(*DELAY_BETWEEN_TABS)
+                time.sleep(delay)
+            
+            # ФАЗА 2: Ждем загрузки всех вкладок
+            print(f"\n[2/4] Жду полной загрузки страниц...")
+            tabs = driver.window_handles[1:]  # Все вкладки кроме главной
+            
+            # Увеличена задержка для избежания блокировки WB
+            time.sleep(5)
+            
+            print(f"  ✓ Все {len(tabs)} вкладок загружены")
+            
+            # ФАЗА 3: Парсим цены из всех вкладок
+            print(f"\n[3/4] Парсинг цен...")
+            for idx, (tab_handle, product) in enumerate(zip(tabs, batch)):
+                try:
+                    driver.switch_to.window(tab_handle)
+                    price_data = parse_price_from_current_page(driver, product['article'])
+                    
+                    # Если captcha - пропускаем
+                    if price_data is None:
+                        price_data = {'price': 0, 'price_with_card': 0}
+                    
+                    # Если вернулось число (старый формат), преобразуем в словарь
+                    if isinstance(price_data, (int, float)):
+                        price_data = {'price': int(price_data), 'price_with_card': 0}
+                    
+                    results.append({
+                        'url': product['url'],
+                        'article': product['article'],
+                        'price': price_data['price'],
+                        'price_with_card': price_data.get('price_with_card')
+                    })
+                    
+                    price = price_data['price']
+                    price_card = price_data.get('price_with_card', 0)
+                    if price_card and price_card > 0:
+                        status = f"{price} ₽ / {price_card} ₽ (с картой)"
+                    else:
+                        status = f"{price} ₽" if price > 0 else "недоступен" if price == 0 else "ошибка"
+                    print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: {status}")
+                
+                except Exception as e:
+                    print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: ✗ ошибка - {e}")
+                    results.append({
+                        'url': product['url'],
+                        'article': product['article'],
+                        'price': 0,
+                        'price_with_card': 0
+                    })
+            
+            # ФАЗА 4: Закрыть все вкладки пакета
+            print(f"\n[4/4] Закрываю вкладки...")
+            for tab_handle in tabs:
+                try:
+                    driver.switch_to.window(tab_handle)
+                    driver.close()
+                except:
+                    pass
+            
+            # Возвращаемся на главную вкладку
+            driver.switch_to.window(main_window)
+            
+            # Промежуточное сохранение
+            if SAVE_INTERMEDIATE_RESULTS and len(results) % SAVE_EVERY_N_PRODUCTS == 0:
+                print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
+                if save_results_to_excel(results, OUTPUT_EXCEL_FILE):
+                    print(f"✓ Сохранено в Excel")
+                # Сохраняем в Google Таблицы (если включено)
+                if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+                    print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
+                    if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+                        print(f"✓ Сохранено в Google Таблицы")
+                    else:
+                        print(f"⚠ Не удалось сохранить в Google Таблицы")
+                # Сохраняем CSV для Google Таблиц (резервный способ)
+                save_results_to_csv_for_google_sheets(results, OUTPUT_EXCEL_FILE)
+            
+            # Задержка между пакетами
+            if batch_start + PARALLEL_TABS < total:
+                delay = random.uniform(*DELAY_BETWEEN_BATCHES)
+                print(f"\n⏸ Пауза {delay:.1f}с перед следующим пакетом...\n")
+                time.sleep(delay)
     
     except (InvalidSessionIdException, Exception) as e:
         print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА в process_products_parallel: {e}")
