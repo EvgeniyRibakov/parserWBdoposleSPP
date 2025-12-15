@@ -1015,6 +1015,7 @@ def process_products_parallel(driver, products):
     Возвращает список результатов
     """
     results = []
+    last_saved_count = 0  # Счетчик последнего сохранения
     try:
         main_window = driver.window_handles[0]
     except (InvalidSessionIdException, Exception) as e:
@@ -1119,6 +1120,19 @@ def process_products_parallel(driver, products):
                         'price': 0,
                         'price_with_card': 0
                     })
+                    
+                    # Промежуточное сохранение каждые 10 товаров (даже при ошибках)
+                    if SAVE_INTERMEDIATE_RESULTS and len(results) - last_saved_count >= SAVE_EVERY_N_PRODUCTS:
+                        print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
+                        if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+                            print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
+                            if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+                                print(f"✓ Сохранено в Google Таблицы")
+                                last_saved_count = len(results)  # Обновляем счетчик
+                            else:
+                                print(f"⚠ Не удалось сохранить в Google Таблицы")
+                        else:
+                            print(f"⚠ Google Таблицы не настроены (GOOGLE_SHEETS_ENABLED = False или URL не указан)")
             
             # ФАЗА 4: Закрыть все вкладки пакета
             print(f"\n[4/4] Закрываю вкладки...")
@@ -1138,13 +1152,14 @@ def process_products_parallel(driver, products):
                     driver.switch_to.window(driver.window_handles[0])
                     main_window = driver.window_handles[0]
             
-            # Промежуточное сохранение в Google Таблицы (каждые 10 товаров)
-            if SAVE_INTERMEDIATE_RESULTS and len(results) % SAVE_EVERY_N_PRODUCTS == 0 and len(results) > 0:
-                print(f"\n💾 Промежуточное сохранение ({len(results)} товаров)...")
+            # Дополнительная проверка сохранения в конце пакета (если накопилось >= 10 товаров с последнего сохранения)
+            if SAVE_INTERMEDIATE_RESULTS and len(results) - last_saved_count >= SAVE_EVERY_N_PRODUCTS:
+                print(f"\n💾 Промежуточное сохранение в конце пакета ({len(results)} товаров)...")
                 if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
                     print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
                     if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
                         print(f"✓ Сохранено в Google Таблицы")
+                        last_saved_count = len(results)  # Обновляем счетчик
                     else:
                         print(f"⚠ Не удалось сохранить в Google Таблицы")
                 else:
