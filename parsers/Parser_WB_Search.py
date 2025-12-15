@@ -85,7 +85,7 @@ SOURCE_PROFILE_FOR_COPY = "Profile 4"  # Откуда копировать cooki
 BROWSER_TYPE = 'chrome'  # 'chrome' или 'edge'
 
 # Режим работы браузера
-HEADLESS_MODE = False  # True = фоновый режим (без визуального окна), False = видимый браузер
+HEADLESS_MODE = True  # True = фоновый режим (без визуального окна), False = видимый браузер
 # Примечание: В headless режиме нельзя авторизоваться вручную, используй готовый профиль!
 
 # Пауза для ручной авторизации при первом запуске
@@ -1015,7 +1015,13 @@ def process_products_parallel(driver, products):
     Возвращает список результатов
     """
     results = []
-    main_window = driver.window_handles[0]
+    try:
+        main_window = driver.window_handles[0]
+    except (InvalidSessionIdException, Exception) as e:
+        print(f"\n[!] ОШИБКА: Браузер закрыт или сессия потеряна: {e}")
+        print(f"    Возвращаю уже собранные результаты: {len(results)} товаров")
+        return results
+    
     total = len(products)
     
     print(f"\n{'='*80}")
@@ -1121,6 +1127,13 @@ def process_products_parallel(driver, products):
             delay = random.uniform(*DELAY_BETWEEN_BATCHES)
             print(f"\n⏸ Пауза {delay:.1f}с перед следующим пакетом...\n")
             time.sleep(delay)
+    
+    except (InvalidSessionIdException, Exception) as e:
+        print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА в process_products_parallel: {e}")
+        print(f"    Возвращаю уже собранные результаты: {len(results)} товаров")
+        import traceback
+        traceback.print_exc()
+        return results  # Возвращаем то, что успели собрать
     
     return results
 
