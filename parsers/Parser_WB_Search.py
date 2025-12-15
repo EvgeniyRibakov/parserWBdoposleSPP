@@ -1058,10 +1058,15 @@ def process_products_parallel(driver, products):
             print(f"\n[2/4] Жду полной загрузки страниц...")
             time.sleep(2)  # Даем время на открытие вкладок
             
-            # Получаем все вкладки кроме главной
-            all_handles = driver.window_handles
-            main_window = driver.current_window_handle
-            tabs = [h for h in all_handles if h != main_window]
+            # Получаем все вкладки кроме главной (с проверкой состояния браузера)
+            try:
+                all_handles = driver.window_handles
+                main_window = driver.current_window_handle
+                tabs = [h for h in all_handles if h != main_window]
+            except (InvalidSessionIdException, Exception) as e:
+                print(f"\n[!] ОШИБКА: Браузер закрыт при получении вкладок: {e}")
+                print(f"    Возвращаю уже собранные результаты: {len(results)} товаров")
+                return results
             
             # Увеличена задержка для избежания блокировки WB
             time.sleep(5)
@@ -1626,6 +1631,25 @@ def main():
                 print(f"\n[!] Прервано пользователем")
                 driver.quit()
                 return
+            
+            # Проверяем что браузер еще жив после авторизации
+            try:
+                driver.current_url  # Простая проверка работоспособности
+                print(f"[ЛОГ] ✓ Браузер активен, продолжаю парсинг...")
+            except (InvalidSessionIdException, Exception) as e:
+                print(f"\n[!] ОШИБКА: Браузер закрыт после авторизации: {e}")
+                print(f"    Перезапускаю браузер...")
+                try:
+                    driver.quit()
+                except:
+                    pass
+                # Перезапускаем браузер
+                driver = setup_browser_driver()
+                if not driver:
+                    print(f"\n[!] Не удалось перезапустить браузер!")
+                    wb.close()
+                    return
+                print(f"[ЛОГ] ✓ Браузер перезапущен")
         elif WAIT_FOR_MANUAL_LOGIN and HEADLESS_MODE:
             print(f"\n⚠️  ВНИМАНИЕ: Headless режим активен!")
             print(f"   Авторизация через браузер невозможна (браузер не виден).")
