@@ -1051,13 +1051,20 @@ def process_products_parallel(driver, products):
                 driver.switch_to.window(main_window)
             
             # Открываем все вкладки
+            initial_handles_count = len(driver.window_handles)
+            print(f"  [ЛОГ] Вкладок до открытия: {initial_handles_count}")
+            
             for idx, product in enumerate(batch):
                 try:
                     print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
                     driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
                     time.sleep(0.5)  # Задержка между открытием вкладок
+                    current_handles = len(driver.window_handles)
+                    print(f"      [ЛОГ] Вкладок после открытия: {current_handles}")
                 except Exception as e:
                     print(f"  [{batch_start + idx + 1}/{total}] ⚠ Ошибка: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # ФАЗА 2: Ждем загрузки всех вкладок
             print(f"\n[2/4] Жду полной загрузки страниц...")
