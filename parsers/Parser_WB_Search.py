@@ -743,9 +743,10 @@ def human_delay(min_sec=1, max_sec=3):
 
 def parse_price_from_current_page(driver, article):
     """
-    Парсит цену с текущей открытой страницы товара
+    Парсит цены с текущей открытой страницы товара
     НЕ открывает и НЕ закрывает вкладки - это делает вызывающая функция
-    Возвращает цену или 0 если товара нет в наличии
+    Возвращает словарь {'price': обычная цена, 'price_with_card': цена с картой}
+    или 0 если товара нет в наличии
     """
     try:
         # Даем странице время полностью загрузиться перед началом парсинга
@@ -771,7 +772,7 @@ def parse_price_from_current_page(driver, article):
         for keyword in unavailable_keywords:
             if keyword in page_text:
                 print(f"  [{article}] ⚠ Товар недоступен: '{keyword}'")
-                return 0
+                return {'price': 0, 'price_with_card': None}
         
         # Кликаем на кнопку кошелька (если есть)
         try:
@@ -783,7 +784,7 @@ def parse_price_from_current_page(driver, article):
         except:
             pass  # Кнопки кошелька нет - это нормально
         
-        # Ищем элемент с финальной ценой
+        # Ищем элемент с обычной ценой (mo-typography_color_primary)
         price_selectors = [
             (By.CSS_SELECTOR, "h2.mo-typography_color_primary"),
             (By.CSS_SELECTOR, "h2[class*='mo-typography'][class*='color_primary']"),
@@ -796,7 +797,16 @@ def parse_price_from_current_page(driver, article):
             (By.CSS_SELECTOR, "ins[class*='price']"),
         ]
         
+        # Ищем элемент с ценой с картой (mo-typography_color_danger - красная цена)
+        price_with_card_selectors = [
+            (By.CSS_SELECTOR, "h2.mo-typography_color_danger"),
+            (By.CSS_SELECTOR, "h2[class*='mo-typography'][class*='color_danger']"),
+        ]
+        
         price = None
+        price_with_card = None
+        
+        # Сначала ищем обычную цену
         for by, selector in price_selectors:
             try:
                 price_elem = WebDriverWait(driver, 8).until(
@@ -810,12 +820,24 @@ def parse_price_from_current_page(driver, article):
             except:
                 continue
         
+        # Затем ищем цену с картой
+        for by, selector in price_with_card_selectors:
+            try:
+                price_card_elem = driver.find_element(by, selector)
+                price_card_text = price_card_elem.text.strip()
+                price_card_num = re.sub(r'[^\d]', '', price_card_text)
+                if price_card_num:
+                    price_with_card = int(price_card_num)
+                    break
+            except:
+                continue
+        
+        # Если обычная цена не найдена, пробуем еще раз
         if not price:
-            # Если цена не найдена, подождем еще и попробуем снова
-            print(f"  [{article}] ⚠ Цена не найдена с первой попытки, жду еще 3 секунды...")
+            print(f"  [{article}] ⚠ Обычная цена не найдена с первой попытки, жду еще 3 секунды...")
             time.sleep(3)
             
-            # Повторная попытка найти цену с увеличенным таймаутом
+            # Повторная попытка найти обычную цену
             for by, selector in price_selectors:
                 try:
                     price_elem = WebDriverWait(driver, 8).until(
@@ -825,20 +847,37 @@ def parse_price_from_current_page(driver, article):
                     price_num = re.sub(r'[^\d]', '', price_text)
                     if price_num:
                         price = int(price_num)
-                        print(f"  [{article}] ✓ Цена найдена со второй попытки: {price} ₽")
+                        print(f"  [{article}] ✓ Обычная цена найдена со второй попытки: {price} ₽")
                         break
                 except:
                     continue
+            
+            # Повторная попытка найти цену с картой
+            if not price_with_card:
+                for by, selector in price_with_card_selectors:
+                    try:
+                        price_card_elem = driver.find_element(by, selector)
+                        price_card_text = price_card_elem.text.strip()
+                        price_card_num = re.sub(r'[^\d]', '', price_card_text)
+                        if price_card_num:
+                            price_with_card = int(price_card_num)
+                            break
+                    except:
+                        continue
         
         if not price:
-            print(f"  [{article}] ✗ Цена не найдена даже после повторной попытки")
-            return 0
+            print(f"  [{article}] ✗ Обычная цена не найдена даже после повторной попытки")
+            return {'price': 0, 'price_with_card': None}
         
-        return price
+        # Возвращаем словарь с обеими ценами
+        return {
+            'price': price,
+            'price_with_card': price_with_card if price_with_card else None
+        }
     
     except Exception as e:
         print(f"  [{article}] ✗ Ошибка парсинга: {e}")
-        return 0
+        return {'price': 0, 'price_with_card': None}
 
 
 def process_products_parallel(driver, products):
@@ -885,19 +924,29 @@ def process_products_parallel(driver, products):
         for idx, (tab_handle, product) in enumerate(zip(tabs, batch)):
             try:
                 driver.switch_to.window(tab_handle)
-                price = parse_price_from_current_page(driver, product['article'])
+                price_data = parse_price_from_current_page(driver, product['article'])
                 
                 # Если captcha - пропускаем
-                if price is None:
-                    price = 0
+                if price_data is None:
+                    price_data = {'price': 0, 'price_with_card': None}
+                
+                # Если вернулось число (старый формат), преобразуем в словарь
+                if isinstance(price_data, (int, float)):
+                    price_data = {'price': int(price_data), 'price_with_card': None}
                 
                 results.append({
                     'url': product['url'],
                     'article': product['article'],
-                    'price': price
+                    'price': price_data['price'],
+                    'price_with_card': price_data.get('price_with_card')
                 })
                 
-                status = f"{price} ₽" if price > 0 else "недоступен" if price == 0 else "ошибка"
+                price = price_data['price']
+                price_card = price_data.get('price_with_card')
+                if price_card:
+                    status = f"{price} ₽ / {price_card} ₽ (с картой)"
+                else:
+                    status = f"{price} ₽" if price > 0 else "недоступен" if price == 0 else "ошибка"
                 print(f"  [{batch_start + idx + 1}/{total}] {product['article']}: {status}")
             
             except Exception as e:
@@ -905,7 +954,8 @@ def process_products_parallel(driver, products):
                 results.append({
                     'url': product['url'],
                     'article': product['article'],
-                    'price': 0
+                    'price': 0,
+                    'price_with_card': None
                 })
         
         # ФАЗА 4: Закрыть все вкладки пакета
@@ -1081,14 +1131,15 @@ def save_results_to_excel(results, output_file):
         ws_out.title = "Цены"
         
         # Заголовки
-        ws_out.append(["ссылка на товар", "артикул", "цена"])
+        ws_out.append(["ссылка на товар", "артикул", "цена", "цена с картой"])
         
         # Данные
         for result in results:
             ws_out.append([
                 result['url'],
                 result['article'],
-                result['price']
+                result['price'],
+                result.get('price_with_card', '')  # Пустая строка если цена с картой не найдена
             ])
         
         # Автофильтр
