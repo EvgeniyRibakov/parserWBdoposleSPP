@@ -107,8 +107,9 @@ TEST_PRODUCTS_COUNT = 50  # Количество товаров для тест�
 GOOGLE_SHEETS_ENABLED = False  # Включить запись в Google Таблицы
 GOOGLE_SHEET_URL = ""  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
 GOOGLE_SHEET_NAME = "Цены"  # Название листа в Google Sheet
-GOOGLE_USE_PUBLIC_ACCESS = True  # True = публичная ссылка (проще, но менее безопасно), False = OAuth2 (нужна настройка)
-GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials (только если GOOGLE_USE_PUBLIC_ACCESS = False)
+GOOGLE_SERVICE_ACCOUNT_FILE = "google_service_account.json"  # JSON файл Service Account (самый простой способ)
+# Альтернатива: GOOGLE_CREDENTIALS_FILE для OAuth2 (требует один раз авторизоваться через браузер)
+GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials
 
 
 def check_chrome_running():
@@ -1325,20 +1326,15 @@ def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
             return False
         
         # Подключаемся к Google Sheets
-        if GOOGLE_USE_PUBLIC_ACCESS:
-            # Упрощенный способ: публичная ссылка с правами редактирования
-            # Инструкция: создайте Google Sheet → Настройки доступа → "Доступ для всех, у кого есть ссылка" → "Редактор"
-            print(f"\n📊 Подключение к Google Таблице через публичную ссылку...")
-            gc = gspread.service_account()  # Пробуем без авторизации (работает только для публичных таблиц)
-            try:
-                spreadsheet = gc.open_by_key(sheet_id)
-            except Exception as e:
-                print(f"[!] Не удалось подключиться через публичную ссылку: {e}")
-                print(f"[!] Убедитесь, что:")
-                print(f"    1. Google Sheet настроен как публичный с правами редактирования")
-                print(f"    2. Или установите GOOGLE_USE_PUBLIC_ACCESS = False и настройте OAuth2")
-                return False
+        service_account_file = os.path.join(PROJECT_ROOT, GOOGLE_SERVICE_ACCOUNT_FILE)
+        
+        # Пробуем использовать Service Account (самый простой способ)
+        if os.path.exists(service_account_file):
+            print(f"\n📊 Подключение к Google Таблице через Service Account...")
+            gc = gspread.service_account(filename=service_account_file)
+            spreadsheet = gc.open_by_key(sheet_id)
         else:
+            # Используем OAuth2 (требует один раз авторизоваться через браузер)
             # OAuth2 авторизация (более безопасно)
             SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
             creds_file = os.path.join(PROJECT_ROOT, GOOGLE_CREDENTIALS_FILE)
