@@ -537,6 +537,7 @@ def setup_browser_driver():
                         try:
                             print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts)} запуска Chrome...")
                             print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
+                            print(f"[ЛОГ] ⚙ Отключаю прокси/хост браузера (если был настроен)...")
                             print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
                             # Запускаем Chrome в отдельном потоке с таймаутом
@@ -669,6 +670,7 @@ def setup_browser_driver():
                         try:
                             print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts_no_profile)} запуска Chrome...")
                             print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
+                            print(f"[ЛОГ] ⚙ Отключаю прокси/хост браузера (если был настроен)...")
                             print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
                             # Запускаем Chrome в отдельном потоке с таймаутом
