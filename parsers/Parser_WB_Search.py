@@ -97,7 +97,7 @@ SAVE_INTERMEDIATE_RESULTS = True  # Сохранять результаты ка
 SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров (0 = только в конце)
 
 # Параллельная обработка товаров
-PARALLEL_TABS = 15  # Количество параллельных вкладок
+PARALLEL_TABS = 10  # Количество параллельных вкладок
 DELAY_BETWEEN_TABS = (1.0, 2.0)  # Задержка между открытием каждой вкладки (мин, макс) в секундах
 DELAY_BETWEEN_BATCHES = (2, 4)  # Задержка между пакетами (мин, макс) в секундах
 TEST_MODE = True  # True = тест на 50 товарах, False = все товары
@@ -1042,50 +1042,19 @@ def process_products_parallel(driver, products):
             
             # ФАЗА 1: Открыть все вкладки пакета
             print(f"\n[1/4] Открываю {len(batch)} вкладок...")
-            tabs = []
             for idx, product in enumerate(batch):
-                try:
-                    print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
-                    # Открываем вкладку и сохраняем её handle
-                    driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
-                    # Случайная задержка между открытием вкладок для избежания блокировки
-                    delay = random.uniform(*DELAY_BETWEEN_TABS)
-                    time.sleep(delay)
-                except Exception as e:
-                    print(f"  [{batch_start + idx + 1}/{total}] ⚠ Ошибка открытия вкладки: {e}")
+                print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
+                driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
+                time.sleep(0.3)  # Минимальная задержка между открытием вкладок
             
             # ФАЗА 2: Ждем загрузки всех вкладок
             print(f"\n[2/4] Жду полной загрузки страниц...")
-            time.sleep(2)  # Даем время на открытие вкладок
+            tabs = driver.window_handles[1:]  # Все вкладки кроме главной
             
-            # Получаем все вкладки кроме главной (с проверкой состояния браузера)
-            try:
-                all_handles = driver.window_handles
-                main_window = driver.current_window_handle
-                tabs = [h for h in all_handles if h != main_window]
-            except (InvalidSessionIdException, Exception) as e:
-                print(f"\n[!] ОШИБКА: Браузер закрыт при получении вкладок: {e}")
-                print(f"    Возвращаю уже собранные результаты: {len(results)} товаров")
-                return results
+            # Ждем 3 секунды для надежной загрузки страниц
+            time.sleep(3)
             
-            # Увеличена задержка для избежания блокировки WB
-            time.sleep(5)
-            
-            print(f"  ✓ Все {len(tabs)} вкладок загружены (всего окон: {len(all_handles)})")
-            
-            if len(tabs) == 0:
-                print(f"  ⚠ ВНИМАНИЕ: Не удалось открыть вкладки! Пробую альтернативный способ...")
-                # Альтернативный способ: открываем каждую ссылку напрямую
-                for idx, product in enumerate(batch):
-                    try:
-                        driver.execute_script(f"window.open('{product['url']}', '_blank');")
-                        time.sleep(0.5)
-                    except:
-                        pass
-                time.sleep(3)
-                all_handles = driver.window_handles
-                tabs = [h for h in all_handles if h != main_window]
-                print(f"  ✓ После повторной попытки: {len(tabs)} вкладок")
+            print(f"  ✓ Все {len(tabs)} вкладок загружены")
             
             # ФАЗА 3: Парсим цены из всех вкладок
             print(f"\n[3/4] Парсинг цен...")
