@@ -144,8 +144,8 @@ SAVE_EVERY_N_PRODUCTS = get_env_int("SAVE_EVERY_N_PRODUCTS", 10)
 
 # Параллельная обработка товаров
 PARALLEL_TABS = get_env_int("PARALLEL_TABS", 20)
-DELAY_BETWEEN_TABS = get_env_tuple("DELAY_BETWEEN_TABS_MIN", "DELAY_BETWEEN_TABS_MAX", (1.0, 2.0))
-DELAY_BETWEEN_BATCHES = get_env_tuple("DELAY_BETWEEN_BATCHES_MIN", "DELAY_BETWEEN_BATCHES_MAX", (2, 4))
+DELAY_BETWEEN_TABS = get_env_tuple("DELAY_BETWEEN_TABS_MIN", "DELAY_BETWEEN_TABS_MAX", (0.0, 0.1))  # Минимальные задержки
+DELAY_BETWEEN_BATCHES = get_env_tuple("DELAY_BETWEEN_BATCHES_MIN", "DELAY_BETWEEN_BATCHES_MAX", (0.5, 1.0))  # Сокращены до минимума
 TEST_MODE = get_env_bool("TEST_MODE", False)
 TEST_PRODUCTS_COUNT = get_env_int("TEST_PRODUCTS_COUNT", 50)
 
@@ -580,71 +580,110 @@ def setup_browser_driver():
                     ]
                     
                     driver = None
-                    # Меняем порядок попыток - сначала более надежные варианты
+                    # Меняем порядок попыток - сначала пробуем без профиля (самый простой вариант)
                     attempts = [
-                        {'use_subprocess': True, 'version_main': None},  # Автоопределение версии - самый надежный
-                        {'use_subprocess': True, 'version_main': 143},
-                        {'use_subprocess': use_subprocess, 'version_main': 143},
+                        {'use_subprocess': True, 'version_main': None, 'user_data_dir': None},  # Без профиля - самый простой
+                        {'use_subprocess': True, 'version_main': None, 'user_data_dir': TEMP_PROFILE_DIR},  # С профилем
+                        {'use_subprocess': False, 'version_main': None, 'user_data_dir': TEMP_PROFILE_DIR},  # Без subprocess
+                        {'use_subprocess': True, 'version_main': 143, 'user_data_dir': TEMP_PROFILE_DIR},   # С указанной версией
                     ]
                     
                     for attempt_num, attempt_config in enumerate(attempts, 1):
                         try:
                             print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts)} запуска Chrome...")
-                            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
-                            print(f"[ЛОГ] ⚙ Отключаю прокси/хост браузера (если был настроен)...")
+                            user_dir_info = attempt_config.get('user_data_dir', 'временный')
+                            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}, user_data_dir={user_dir_info}")
                             print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
-                            # Запускаем Chrome в отдельном потоке с таймаутом
-                            driver_result = [None]
-                            driver_error = [None]
-                            
-                            def start_chrome():
-                                try:
-                                    # Создаем опции для отключения прокси и других сетевых настроек
-                                    options = ChromeOptions()
-                                    # Отключаем прокси (если был настроен хост браузера)
-                                    options.add_argument("--no-proxy-server")
-                                    options.add_argument("--proxy-server=direct://")
-                                    options.add_argument("--proxy-bypass-list=*")
-                                    # Дополнительные опции для стабильности
-                                    options.add_argument("--disable-extensions")
-                                    options.add_argument("--disable-plugins")
-                                    
-                                    driver_obj = uc.Chrome(
-                                        user_data_dir=TEMP_PROFILE_DIR,
-                                        headless=HEADLESS_MODE,
-                                        use_subprocess=attempt_config['use_subprocess'],
-                                        version_main=attempt_config['version_main'],
-                                        options=options  # Передаем опции для отключения прокси
-                                    )
-                                    driver_result[0] = driver_obj
-                                except Exception as e:
-                                    driver_error[0] = e
-                            
-                            chrome_thread = threading.Thread(target=start_chrome, daemon=True)
-                            chrome_thread.start()
-                            chrome_thread.join(timeout=45)  # Таймаут 45 секунд
-                            
-                            if chrome_thread.is_alive():
-                                print(f"[ЛОГ] ⚠ Таймаут запуска Chrome (45 сек). Пробую следующую конфигурацию...")
-                                # Пытаемся убить зависший процесс Chrome
+                            # Запускаем Chrome напрямую (без потока для большей надежности)
+                            try:
+                                # Создаем минимальные опции (undetected-chromedriver сам добавляет нужные)
+                                options = ChromeOptions()
+                                # Только критичные опции для стабильности
+                                options.add_argument("--disable-dev-shm-usage")
+                                options.add_argument("--no-sandbox")
+                                # НЕ добавляем --remote-debugging-port - uc.Chrome сам управляет портом
+                                # НЕ добавляем прокси опции - они могут конфликтовать с uc.Chrome
+                                
+                                print(f"[ЛОГ] Создаю Chrome драйвер...")
+                                # undetected-chromedriver сам управляет профилем и портами
+                                driver_kwargs = {
+                                    'headless': HEADLESS_MODE,
+                                    'use_subprocess': attempt_config['use_subprocess'],
+                                    'version_main': attempt_config['version_main'],
+                                    'options': options
+                                }
+                                
+                                # Добавляем user_data_dir только если указан (не None)
+                                user_dir = attempt_config.get('user_data_dir')
+                                if user_dir is not None:
+                                    driver_kwargs['user_data_dir'] = user_dir
+                                    print(f"[ЛОГ] Использую профиль: {user_dir}")
+                                else:
+                                    print(f"[ЛОГ] Запускаю Chrome без профиля (временный профиль)")
+                                
+                                driver = uc.Chrome(**driver_kwargs)
+                                
+                                # Даем больше времени на полную инициализацию Chrome
+                                print(f"[ЛОГ] Chrome драйвер создан, жду инициализацию Chrome...")
+                                time.sleep(5)  # Увеличена задержка для полной инициализации Chrome
+                                
+                                # Проверяем что драйвер действительно работает
+                                max_retries = 3
+                                driver_works = False
+                                for retry in range(max_retries):
+                                    try:
+                                        driver.current_url  # Простая проверка
+                                        print(f"[ЛОГ] ✓ Chrome драйвер создан успешно и отвечает")
+                                        driver_works = True
+                                        break
+                                    except Exception as check_error:
+                                        if retry < max_retries - 1:
+                                            print(f"[ЛОГ] ⚠ Попытка {retry + 1}/{max_retries}: драйвер еще не готов, жду еще 2 секунды...")
+                                            time.sleep(2)
+                                        else:
+                                            print(f"[ЛОГ] ⚠ Драйвер создан, но не отвечает после {max_retries} попыток: {check_error}")
+                                            try:
+                                                driver.quit()
+                                            except:
+                                                pass
+                                            driver = None
+                                            driver_works = False
+                                
+                                if driver_works:
+                                    break  # Успешно запустили, выходим из цикла попыток
+                                elif attempt_num < len(attempts):
+                                    print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    raise Exception("Chrome драйвер не отвечает после всех попыток")
+                                        
+                            except Exception as e:
+                                error_msg = str(e)
+                                print(f"[ЛОГ] ✗ Ошибка создания Chrome драйвера: {error_msg[:200]}")
+                                # Пытаемся убить зависшие процессы Chrome
                                 try:
                                     subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
                                                  capture_output=True, timeout=5)
+                                    time.sleep(2)
                                 except:
                                     pass
-                                time.sleep(2)
-                                continue
+                                
+                                if attempt_num < len(attempts):
+                                    print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    raise
                             
-                            if driver_error[0]:
-                                raise driver_error[0]
-                            
-                            if not driver_result[0]:
+                            if not driver:
                                 print(f"[ЛОГ] ⚠ Chrome не запустился. Пробую следующую конфигурацию...")
-                                time.sleep(2)
-                                continue
-                            
-                            driver = driver_result[0]
+                                if attempt_num < len(attempts):
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    raise Exception("Chrome не запустился после всех попыток")
                             print(f"[ЛОГ] Chrome процесс запущен, проверяю работоспособность...")
                             
                             # Проверяем что драйвер работает
@@ -706,97 +745,103 @@ def setup_browser_driver():
                     print(f"[ЛОГ] Режим: {mode_text}")
                     
                     # Пробуем несколько конфигураций для надежности
-                    attempts_no_profile = [
-                        {'use_subprocess': HEADLESS_MODE, 'version_main': 143},
-                        {'use_subprocess': True, 'version_main': 143},
-                        {'use_subprocess': True, 'version_main': None},  # Автоопределение версии
-                    ]
-                    
                     driver = None
-                    # Меняем порядок попыток - сначала более надежные варианты
+                    # Меняем порядок попыток - сначала пробуем без профиля (самый простой вариант)
                     attempts_no_profile = [
-                        {'use_subprocess': True, 'version_main': None},  # Автоопределение версии - самый надежный
-                        {'use_subprocess': True, 'version_main': 143},
-                        {'use_subprocess': HEADLESS_MODE, 'version_main': 143},
+                        {'use_subprocess': True, 'version_main': None, 'user_data_dir': None},  # Без профиля - самый простой
+                        {'use_subprocess': True, 'version_main': None},   # С временным профилем
+                        {'use_subprocess': False, 'version_main': None},  # Без subprocess
+                        {'use_subprocess': True, 'version_main': 143},    # С указанной версией
                     ]
                     
                     for attempt_num, attempt_config in enumerate(attempts_no_profile, 1):
                         try:
                             print(f"[ЛОГ] Попытка {attempt_num}/{len(attempts_no_profile)} запуска Chrome...")
-                            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}")
+                            user_dir_info = attempt_config.get('user_data_dir', 'временный')
+                            print(f"[ЛОГ] Параметры: use_subprocess={attempt_config['use_subprocess']}, version_main={attempt_config['version_main']}, user_data_dir={user_dir_info}")
                             print(f"[ЛОГ] ⚙ Отключаю прокси/хост браузера (если был настроен)...")
                             print(f"[ЛОГ] Запускаю Chrome... (таймаут 45 секунд)")
                             
-                            # Запускаем Chrome в отдельном потоке с таймаутом
-                            driver_result = [None]
-                            driver_error = [None]
-                            
-                            def start_chrome():
-                                try:
-                                    # Создаем опции для отключения прокси и других сетевых настроек
-                                    options = ChromeOptions()
-                                    # Отключаем прокси (если был настроен хост браузера)
-                                    options.add_argument("--no-proxy-server")
-                                    options.add_argument("--proxy-server=direct://")
-                                    options.add_argument("--proxy-bypass-list=*")
-                                    # Дополнительные опции для стабильности
-                                    options.add_argument("--disable-extensions")
-                                    options.add_argument("--disable-plugins")
-                                    
-                                    driver_obj = uc.Chrome(
-                                        headless=HEADLESS_MODE,
-                                        use_subprocess=attempt_config['use_subprocess'],
-                                        version_main=attempt_config['version_main'],
-                                        options=options  # Передаем опции для отключения прокси
-                                    )
-                                    driver_result[0] = driver_obj
-                                except Exception as e:
-                                    driver_error[0] = e
-                            
-                            chrome_thread = threading.Thread(target=start_chrome, daemon=True)
-                            chrome_thread.start()
-                            chrome_thread.join(timeout=45)  # Таймаут 45 секунд
-                            
-                            if chrome_thread.is_alive():
-                                print(f"[ЛОГ] ⚠ Таймаут запуска Chrome (45 сек). Пробую следующую конфигурацию...")
-                                # Пытаемся убить зависший процесс Chrome
+                            # Запускаем Chrome напрямую (без потока для большей надежности)
+                            try:
+                                # Создаем минимальные опции (undetected-chromedriver сам добавляет нужные)
+                                options = ChromeOptions()
+                                # Только критичные опции для стабильности
+                                options.add_argument("--disable-dev-shm-usage")
+                                options.add_argument("--no-sandbox")
+                                # НЕ добавляем --remote-debugging-port - uc.Chrome сам управляет портом
+                                
+                                print(f"[ЛОГ] Создаю Chrome драйвер...")
+                                driver_kwargs = {
+                                    'headless': HEADLESS_MODE,
+                                    'use_subprocess': attempt_config['use_subprocess'],
+                                    'version_main': attempt_config['version_main'],
+                                    'options': options
+                                }
+                                
+                                # Добавляем user_data_dir только если указан (не None)
+                                user_dir = attempt_config.get('user_data_dir')
+                                if user_dir is not None:
+                                    driver_kwargs['user_data_dir'] = user_dir
+                                    print(f"[ЛОГ] Использую профиль: {user_dir}")
+                                else:
+                                    print(f"[ЛОГ] Запускаю Chrome без профиля (временный профиль)")
+                                
+                                driver = uc.Chrome(**driver_kwargs)
+                                
+                                # Даем больше времени на полную инициализацию Chrome
+                                print(f"[ЛОГ] Chrome драйвер создан, жду инициализацию Chrome...")
+                                time.sleep(5)  # Увеличена задержка для полной инициализации Chrome
+                                
+                                # Проверяем что драйвер действительно работает
+                                max_retries = 3
+                                driver_works = False
+                                for retry in range(max_retries):
+                                    try:
+                                        driver.current_url  # Простая проверка
+                                        print(f"[ЛОГ] ✓ Chrome драйвер создан успешно и отвечает")
+                                        print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
+                                        driver_works = True
+                                        break  # Успешно запустили, выходим из цикла
+                                    except Exception as check_error:
+                                        if retry < max_retries - 1:
+                                            print(f"[ЛОГ] ⚠ Попытка {retry + 1}/{max_retries}: драйвер еще не готов, жду еще 2 секунды...")
+                                            time.sleep(2)
+                                        else:
+                                            print(f"[ЛОГ] ⚠ Драйвер создан, но не отвечает после {max_retries} попыток: {check_error}")
+                                            try:
+                                                driver.quit()
+                                            except:
+                                                pass
+                                            driver = None
+                                            driver_works = False
+                                
+                                if driver_works:
+                                    break  # Успешно запустили, выходим из цикла попыток
+                                elif attempt_num < len(attempts_no_profile):
+                                    print(f"[ЛОГ] Пробую следующую конфигурацию...")
+                                    time.sleep(2)
+                                    continue
+                                else:
+                                    raise Exception("Chrome драйвер не отвечает после всех попыток")
+                                        
+                            except Exception as e:
+                                error_msg = str(e)
+                                print(f"[ЛОГ] ✗ Ошибка создания Chrome драйвера: {error_msg[:200]}")
+                                # Пытаемся убить зависшие процессы Chrome
                                 try:
                                     subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
                                                  capture_output=True, timeout=5)
+                                    time.sleep(2)
                                 except:
                                     pass
-                                time.sleep(2)
-                                continue
-                            
-                            if driver_error[0]:
-                                raise driver_error[0]
-                            
-                            if not driver_result[0]:
-                                print(f"[ЛОГ] ⚠ Chrome не запустился. Пробую следующую конфигурацию...")
-                                time.sleep(2)
-                                continue
-                            
-                            driver = driver_result[0]
-                            print(f"[ЛОГ] Chrome процесс запущен, проверяю работоспособность...")
-                            
-                            # Проверяем что драйвер работает
-                            try:
-                                driver.current_url  # Простая проверка работоспособности
-                                print(f"[ЛОГ] ✓ Chrome запущен с временным профилем")
-                                break  # Успешно запустили, выходим из цикла
-                            except Exception as check_error:
-                                print(f"[ЛОГ] ⚠ Драйвер создан, но не отвечает: {check_error}")
-                                try:
-                                    driver.quit()
-                                except:
-                                    pass
-                                driver = None
+                                
                                 if attempt_num < len(attempts_no_profile):
                                     print(f"[ЛОГ] Пробую следующую конфигурацию...")
                                     time.sleep(2)
                                     continue
                                 else:
-                                    raise Exception("Драйвер не отвечает после всех попыток")
+                                    raise
                                     
                         except (ConnectionResetError, ConnectionError, ConnectionAbortedError) as conn_error:
                             error_msg = str(conn_error)
@@ -906,7 +951,7 @@ def human_delay(min_sec=1, max_sec=3):
     time.sleep(delay)
 
 
-def parse_price_from_current_page(driver, article):
+def parse_price_from_current_page(driver, article, product_url=None):
     """
     Парсит цены с текущей открытой страницы товара
     НЕ открывает и НЕ закрывает вкладки - это делает вызывающая функция
@@ -914,8 +959,8 @@ def parse_price_from_current_page(driver, article):
     или 0 если товара нет в наличии
     """
     try:
-        # Даем странице время полностью загрузиться перед началом парсинга
-        time.sleep(1)
+        # Минимальная задержка для загрузки страницы (основная задержка будет при повторной попытке если данные не найдены)
+        time.sleep(0.5)
         
         # Проверяем на captcha и блокировку WB
         page_source_lower = driver.page_source.lower()
@@ -948,11 +993,11 @@ def parse_price_from_current_page(driver, article):
         
         # Кликаем на кнопку кошелька (если есть)
         try:
-            wallet_button = WebDriverWait(driver, 3).until(
+            wallet_button = WebDriverWait(driver, 2).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[class*='priceBlockWalletPrice']"))
             )
             wallet_button.click()
-            time.sleep(1.5)  # Увеличена задержка для появления финальной цены
+            time.sleep(0.5)  # Минимальная задержка для появления финальной цены
         except:
             pass  # Кнопки кошелька нет - это нормально
         
@@ -1005,10 +1050,20 @@ def parse_price_from_current_page(driver, article):
             except:
                 continue
         
-        # Если обычная цена не найдена, пробуем еще раз
+        # Если обычная цена не найдена, переходим на страницу, ждем 5 секунд и проверяем заново
         if not price:
-            print(f"  [{article}] ⚠ Обычная цена не найдена с первой попытки, жду еще 3 секунды...")
-            time.sleep(3)
+            print(f"  [{article}] ⚠ Обычная цена не найдена с первой попытки, перезагружаю страницу и жду 5 секунд...")
+            try:
+                # Переходим на страницу товара заново
+                current_url = driver.current_url
+                if product_url:
+                    driver.get(product_url)
+                else:
+                    driver.get(current_url)  # Перезагружаем текущую страницу
+                time.sleep(5)  # Ждем 5 секунд для загрузки страницы товара
+            except Exception as e:
+                print(f"  [{article}] ⚠ Ошибка перезагрузки страницы: {e}, просто жду 5 секунд...")
+                time.sleep(5)  # Если не удалось перейти, просто ждем
             
             # Повторная попытка найти обычную цену
             for by, selector in price_selectors:
@@ -1095,15 +1150,35 @@ def process_products_parallel(driver, products):
                 main_window = driver.window_handles[0]
                 driver.switch_to.window(main_window)
             
-            # Открываем все вкладки
+            # Открываем все вкладки и сохраняем соответствие между вкладками и товарами
             initial_handles_count = len(driver.window_handles)
             print(f"  [ЛОГ] Вкладок до открытия: {initial_handles_count}")
+            
+            # Словарь для сохранения соответствия: handle -> product
+            opened_tabs_map = {}
             
             for idx, product in enumerate(batch):
                 try:
                     print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
+                    # Открываем вкладку
                     driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
-                    time.sleep(0.5)  # Задержка между открытием вкладок
+                    time.sleep(0.1)  # Небольшая задержка для открытия вкладки
+                    
+                    # Получаем handle новой вкладки (последняя открытая)
+                    try:
+                        all_handles = driver.window_handles
+                        if len(all_handles) > initial_handles_count + idx:
+                            new_tab_handle = all_handles[-1]
+                            # Сохраняем соответствие между вкладкой и товаром
+                            opened_tabs_map[new_tab_handle] = product
+                            # Переключаемся на новую вкладку чтобы она точно открылась и загрузилась
+                            driver.switch_to.window(new_tab_handle)
+                            time.sleep(0.1)  # Даем время на загрузку URL
+                            # Возвращаемся на главную вкладку
+                            driver.switch_to.window(main_window)
+                    except Exception as tab_error:
+                        print(f"      [ЛОГ] ⚠ Ошибка при сохранении соответствия вкладки: {tab_error}")
+                    
                     current_handles = len(driver.window_handles)
                     print(f"      [ЛОГ] Вкладок после открытия: {current_handles}")
                 except Exception as e:
@@ -1113,30 +1188,44 @@ def process_products_parallel(driver, products):
             
             # ФАЗА 2: Ждем загрузки всех вкладок
             print(f"\n[2/4] Жду полной загрузки страниц...")
-            time.sleep(2)  # Даем время на открытие вкладок
+            time.sleep(0.5)  # Минимальная задержка для открытия вкладок
             
             # Получаем все вкладки кроме главной
             try:
                 all_handles = driver.window_handles
                 tabs = [h for h in all_handles if h != main_window]
                 print(f"  [ЛОГ] Всего окон: {len(all_handles)}, вкладок для парсинга: {len(tabs)}")
+                
+                # Если у нас есть сохраненное соответствие, используем его
+                # Иначе создаем соответствие по порядку (fallback)
+                if not opened_tabs_map and len(tabs) == len(batch):
+                    # Fallback: предполагаем что порядок совпадает
+                    for idx, tab_handle in enumerate(tabs):
+                        if idx < len(batch):
+                            opened_tabs_map[tab_handle] = batch[idx]
             except Exception as e:
                 print(f"  ⚠ Ошибка получения вкладок: {e}")
                 tabs = []
             
-            # Ждем еще немного для загрузки страниц
-            time.sleep(3)
+            # Минимальная задержка для загрузки страниц (основная задержка будет при парсинге каждой страницы)
+            time.sleep(1)
             
             if len(tabs) == 0:
                 print(f"  ⚠ ВНИМАНИЕ: Вкладки не открылись! Пробую еще раз...")
-                # Пробуем открыть еще раз
+                # Пробуем открыть еще раз с переключением на каждую вкладку
+                driver.switch_to.window(main_window)
                 for idx, product in enumerate(batch):
                     try:
                         driver.execute_script(f"window.open('{product['url']}', '_blank');")
-                        time.sleep(0.3)
-                    except:
-                        pass
-                time.sleep(2)
+                        time.sleep(0.1)
+                        # Переключаемся на новую вкладку чтобы она точно открылась
+                        if len(driver.window_handles) > initial_handles_count + idx + 1:
+                            driver.switch_to.window(driver.window_handles[-1])
+                            time.sleep(0.05)
+                            driver.switch_to.window(main_window)
+                    except Exception as e:
+                        print(f"  [ЛОГ] Ошибка при повторном открытии вкладки {idx+1}: {e}")
+                time.sleep(0.5)
                 try:
                     all_handles = driver.window_handles
                     tabs = [h for h in all_handles if h != main_window]
@@ -1148,10 +1237,126 @@ def process_products_parallel(driver, products):
             
             # ФАЗА 3: Парсим цены из всех вкладок
             print(f"\n[3/4] Парсинг цен...")
-            for idx, (tab_handle, product) in enumerate(zip(tabs, batch)):
+            
+            # Сначала создаем словарь соответствия вкладок и товаров по URL
+            # Это гарантирует, что мы парсим цену правильного товара
+            tab_to_product = {}
+            
+            # Используем сохраненное соответствие если есть
+            if opened_tabs_map:
+                tab_to_product = opened_tabs_map.copy()
+                print(f"  [ЛОГ] Использую сохраненное соответствие вкладок и товаров")
+            else:
+                # Создаем соответствие по URL на каждой вкладке
+                for tab_handle in tabs:
+                    try:
+                        driver.switch_to.window(tab_handle)
+                        time.sleep(0.1)  # Небольшая задержка для загрузки URL
+                        current_url = driver.current_url
+                        
+                        # Ищем соответствующий товар по URL
+                        for product in batch:
+                            # Проверяем совпадение по артикулу в URL
+                            if product['article'] in current_url or product['url'] in current_url:
+                                tab_to_product[tab_handle] = product
+                                break
+                    except Exception as e:
+                        print(f"  [ЛОГ] Ошибка при проверке вкладки {tab_handle}: {e}")
+                        continue
+            
+            # Теперь парсим цены, гарантируя соответствие товара и вкладки
+            for idx, product in enumerate(batch):
                 try:
-                    driver.switch_to.window(tab_handle)
-                    price_data = parse_price_from_current_page(driver, product['article'])
+                    # Ищем вкладку с правильным товаром
+                    matching_tab = None
+                    for tab_handle, tab_product in tab_to_product.items():
+                        if tab_product['article'] == product['article']:
+                            matching_tab = tab_handle
+                            break
+                    
+                    if not matching_tab:
+                        # Если не нашли вкладку, пробуем найти по порядку (fallback)
+                        if idx < len(tabs):
+                            matching_tab = tabs[idx]
+                            # Проверяем что это правильный товар
+                            try:
+                                driver.switch_to.window(matching_tab)
+                                current_url = driver.current_url
+                                if product['article'] not in current_url and product['url'] not in current_url:
+                                    print(f"  [{batch_start + idx + 1}/{total}] ⚠ Вкладка не соответствует товару {product['article']}, ищу правильную...")
+                                    # Пробуем найти правильную вкладку среди всех открытых
+                                    found_correct_tab = False
+                                    for tab_handle in tabs:
+                                        try:
+                                            driver.switch_to.window(tab_handle)
+                                            tab_url = driver.current_url
+                                            if product['article'] in tab_url or product['url'] in tab_url:
+                                                matching_tab = tab_handle
+                                                found_correct_tab = True
+                                                break
+                                        except:
+                                            continue
+                                    
+                                    if not found_correct_tab:
+                                        print(f"  [{batch_start + idx + 1}/{total}] ✗ Не удалось найти вкладку с товаром {product['article']}")
+                                        results.append({
+                                            'url': product['url'],
+                                            'article': product['article'],
+                                            'price': 0,
+                                            'price_with_card': 0
+                                        })
+                                        continue
+                            except:
+                                pass
+                        else:
+                            print(f"  [{batch_start + idx + 1}/{total}] ⚠ Вкладка для товара {product['article']} не найдена")
+                            results.append({
+                                'url': product['url'],
+                                'article': product['article'],
+                                'price': 0,
+                                'price_with_card': 0
+                            })
+                            continue
+                    
+                    # Переключаемся на правильную вкладку
+                    driver.switch_to.window(matching_tab)
+                    
+                    # КРИТИЧНО: Финальная проверка - убеждаемся что на вкладке правильный товар
+                    try:
+                        current_url = driver.current_url
+                        if product['article'] not in current_url and product['url'] not in current_url:
+                            print(f"  [{batch_start + idx + 1}/{total}] ⚠ КРИТИЧНО: На вкладке неверный товар!")
+                            print(f"      Ожидается: {product['article']} ({product['url'][:50]}...)")
+                            print(f"      На вкладке: {current_url[:80]}...")
+                            # Пробуем найти правильную вкладку среди всех открытых
+                            found_correct_tab = False
+                            for tab_handle in tabs:
+                                try:
+                                    driver.switch_to.window(tab_handle)
+                                    tab_url = driver.current_url
+                                    if product['article'] in tab_url or product['url'] in tab_url:
+                                        matching_tab = tab_handle
+                                        found_correct_tab = True
+                                        print(f"      ✓ Найдена правильная вкладка для {product['article']}")
+                                        break
+                                except:
+                                    continue
+                            
+                            if not found_correct_tab:
+                                print(f"  [{batch_start + idx + 1}/{total}] ✗ Не удалось найти вкладку с товаром {product['article']}")
+                                results.append({
+                                    'url': product['url'],
+                                    'article': product['article'],
+                                    'price': 0,
+                                    'price_with_card': 0
+                                })
+                                continue
+                    except Exception as url_check_error:
+                        print(f"  [ЛОГ] ⚠ Не удалось проверить URL вкладки: {url_check_error}")
+                        # Продолжаем парсинг, но с предупреждением
+                    
+                    # Парсим цену с правильной вкладки
+                    price_data = parse_price_from_current_page(driver, product['article'], product['url'])
                     
                     # Если captcha - пропускаем
                     if price_data is None:
@@ -1240,9 +1445,9 @@ def process_products_parallel(driver, products):
                 else:
                     print(f"⚠ Google Таблицы не настроены (GOOGLE_SHEETS_ENABLED = False или URL не указан)")
             
-            # Задержка между пакетами
+            # Минимальная задержка между пакетами (сокращена для ускорения)
             if batch_start + PARALLEL_TABS < total:
-                delay = random.uniform(*DELAY_BETWEEN_BATCHES)
+                delay = 0.5  # Минимальная задержка вместо 2-4 секунд
                 print(f"\n⏸ Пауза {delay:.1f}с перед следующим пакетом...\n")
                 time.sleep(delay)
     
@@ -1483,6 +1688,79 @@ def get_last_processed_row_count(sheet_url, sheet_name="Лист1"):
         raise Exception(f"Ошибка при чтении Google Таблицы: {e}")
 
 
+def get_processed_articles_from_google_sheets(sheet_url, sheet_name="Лист1"):
+    """
+    Получает множество всех уже обработанных артикулов из Google Таблицы
+    Возвращает set артикулов (строки), или пустой set если таблица пустая
+    """
+    if not GOOGLE_SHEETS_ENABLED:
+        return set()
+    
+    if not sheet_url:
+        return set()
+    
+    try:
+        import gspread
+    except ImportError:
+        print(f"[ЛОГ] gspread не установлен, не могу проверить недостающие артикулы")
+        return set()
+    
+    try:
+        # Извлекаем ID таблицы из URL
+        if '/d/' in sheet_url:
+            sheet_id = sheet_url.split('/d/')[1].split('/')[0]
+        else:
+            return set()
+        
+        # Подключаемся к Google Sheets
+        service_account_file = os.path.join(PROJECT_ROOT, GOOGLE_SERVICE_ACCOUNT_FILE)
+        
+        if not os.path.exists(service_account_file):
+            return set()
+        
+        gc = gspread.service_account(filename=service_account_file)
+        spreadsheet = gc.open_by_key(sheet_id)
+        
+        # Получаем лист
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            return set()
+        
+        # Получаем все значения (начиная со 2-й строки, первая - заголовок)
+        all_values = worksheet.get_all_values()
+        
+        if len(all_values) <= 1:
+            return set()
+        
+        # Артикулы находятся во 2-й колонке (индекс 1)
+        processed_articles = set()
+        for row in all_values[1:]:  # Пропускаем заголовок
+            if len(row) > 1 and row[1]:  # Проверяем что есть артикул
+                article = str(row[1]).strip()
+                if article:
+                    processed_articles.add(article)
+        
+        return processed_articles
+        
+    except Exception as e:
+        print(f"[ЛОГ] Ошибка при чтении артикулов из Google Таблицы: {e}")
+        return set()
+
+
+def find_missing_articles(all_products, processed_articles):
+    """
+    Находит товары из all_products, которых нет в processed_articles
+    Возвращает список словарей с ключами 'url' и 'article'
+    """
+    missing_products = []
+    for product in all_products:
+        article = str(product['article']).strip()
+        if article and article not in processed_articles:
+            missing_products.append(product)
+    return missing_products
+
+
 def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены", append_only=False):
     """
     Сохраняет результаты в Google Таблицы автоматически через gspread с OAuth2
@@ -1712,6 +1990,7 @@ def main():
     # Формат: колонка A - ссылка, колонка B - артикул
     # Начинаем со 2-й строки (первая может быть заголовком)
     products = []
+    all_products = []  # Сохраняем все товары для проверки недостающих артикулов
     start_row = 1
     
     # Проверяем первую строку - если это заголовки, начинаем со 2-й
@@ -1736,26 +2015,23 @@ def main():
         if article:
             # Если есть ссылка - используем её, иначе генерируем
             if url and "wildberries.ru" in url:
-                products.append({
-                    'url': url,
-                    'article': article
-                })
+                product = {'url': url, 'article': article}
+                products.append(product)
+                all_products.append(product)
             else:
                 # Генерируем ссылку из артикула
-                products.append({
-                    'url': f"https://www.wildberries.ru/catalog/{article}/detail.aspx",
-                    'article': article
-                })
+                product = {'url': f"https://www.wildberries.ru/catalog/{article}/detail.aspx", 'article': article}
+                products.append(product)
+                all_products.append(product)
         # Если артикула нет, но есть ссылка - извлекаем артикул из ссылки
         elif url and "wildberries.ru" in url:
             import re
             match = re.search(r'/catalog/(\d+)/', url)
             if match:
                 article = match.group(1)
-                products.append({
-                    'url': url,
-                    'article': article
-                })
+                product = {'url': url, 'article': article}
+                products.append(product)
+                all_products.append(product)
     
     print(f"    ✓ Найдено товаров: {len(products)}")
     
@@ -1808,6 +2084,8 @@ def main():
     driver = None
     results = []  # Инициализируем результаты вне try, чтобы сохранить в finally
     last_saved_count = 0  # Счетчик сохраненных товаров для финального сохранения
+    # Сохраняем все товары для проверки недостающих артикулов (доступно в finally)
+    all_products_for_check = all_products.copy() if 'all_products' in locals() else []
     try:
         driver = setup_browser_driver()
         
@@ -1916,12 +2194,56 @@ def main():
             print(f"   - Браузер закрылся до начала парсинга")
             print(f"   - Ошибка в process_products_parallel")
         
+        # Проверяем недостающие артикулы и допарсиваем их
+        if driver and GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+            try:
+                print(f"\n{'='*80}")
+                print("ПРОВЕРКА НЕДОСТАЮЩИХ АРТИКУЛОВ")
+                print(f"{'='*80}")
+                
+                # Получаем все артикулы из Google Таблицы
+                print(f"\n[1/3] Получаю список обработанных артикулов из Google Таблицы...")
+                processed_articles = get_processed_articles_from_google_sheets(GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME)
+                print(f"  ✓ Найдено обработанных артикулов в Google Таблице: {len(processed_articles)}")
+                
+                # Используем сохраненный список всех товаров
+                if all_products_for_check:
+                    print(f"\n[2/3] Использую загруженные товары из файла: {len(all_products_for_check)}")
+                    
+                    # Находим недостающие артикулы
+                    print(f"\n[3/3] Ищу недостающие артикулы...")
+                    missing_products = find_missing_articles(all_products_for_check, processed_articles)
+                    
+                    if missing_products:
+                        print(f"  ⚠ Найдено недостающих артикулов: {len(missing_products)}")
+                        print(f"  → Допарсиваю недостающие товары...")
+                        
+                        # Допарсиваем недостающие товары
+                        missing_results, _ = process_products_parallel(driver, missing_products)
+                        
+                        if missing_results:
+                            print(f"\n📊 Сохранение допарсенных товаров ({len(missing_results)} товаров)...")
+                            if save_results_to_google_sheets(missing_results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME, append_only=True):
+                                print(f"✓ Допарсенные товары сохранены в Google Таблицы")
+                            else:
+                                print(f"⚠ Не удалось сохранить допарсенные товары")
+                    else:
+                        print(f"  ✓ Все артикулы из файла уже обработаны!")
+                else:
+                    print(f"  ⚠ Не удалось найти список всех товаров для проверки")
+                    
+            except Exception as e:
+                print(f"\n⚠ Ошибка при проверке недостающих артикулов: {e}")
+                import traceback
+                traceback.print_exc()
+        
         if driver:
             print(f"\n[Закрываю Chrome через 5 секунд...]")
             time.sleep(5)
             driver.quit()
         
-        wb.close()
+        if 'wb' in locals():
+            wb.close()
     
     print(f"\n{'='*80}")
     print("ЗАВЕРШЕНО")
