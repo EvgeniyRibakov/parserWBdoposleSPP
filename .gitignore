@@ -1,27 +1,12 @@
-# Секретные данные
+# Секретные файлы
 .env
+google-credentials.json
+google_credentials.json
+google_token.pickle
 
-# Excel файлы с данными (результаты парсинга)
-data/prices_results.xlsx
-data/Парсер цен.xlsx
-data/~$*.xlsx
-# Но разрешаем шаблоны и примеры
-!data/links_to_products.xlsx
-
-# Chrome профили (кеши, cookies, личные данные) - ОГРОМНЫЕ ФАЙЛЫ!
+# Временные профили Chrome
 chrome_parser_profile/
 chrome_temp_profile/
-**/Cache/
-**/Cache_Data/
-**/Code Cache/
-
-# Временные файлы
-*.tmp
-*.log
-
-# Старые батники (не используются)
-START_CHROME_DEBUG.bat
-START_EDGE_DEBUG.bat
 
 # Python
 __pycache__/
@@ -29,19 +14,29 @@ __pycache__/
 *$py.class
 *.so
 .Python
-
-# Virtual Environment
-venv/
 env/
+venv/
 ENV/
+build/
+dist/
+*.egg-info/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Excel временные файлы
+~$*.xlsx
+~$*.xls
+
+# Большие файлы captured requests
+data/captured_requests/
+*.json
+!requirements.json

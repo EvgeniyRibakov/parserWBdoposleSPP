@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 ПАРСЕР ЦЕН WILDBERRIES - ПРОСТОЙ ПАРСЕР ЦЕН
-Открывает карточки товаров напрямую по артикулам и извлекает цену
-Сохраняет результаты в текстовый файл: ссылка, артикул, цена
+Открывает карточки товаров напрямую по ссылкам и извлекает цену
+Сохраняет результаты в Google Таблицы
 
 ИНСТРУКЦИЯ:
-1. Сначала запустите: python Create_Links_Excel.py (создаст файл со ссылками)
+1. Убедитесь что файл Articles.xlsx содержит ссылки (колонка A) и артикулы (колонка B)
 2. Убедитесь что Chrome закрыт (или используйте remote режим)
 3. Запустите: python Parser_WB_Search.py
-4. Парсер читает ссылки из файла links_to_products.xlsx
-5. Результаты сохраняются в prices_results.xlsx
+4. Парсер читает ссылки из файла Articles.xlsx
+5. Результаты сохраняются в Google Таблицы (настроено в конфигурации)
 
 РЕЖИМЫ РАБОТЫ:
 - Обычный режим (USE_REMOTE_CHROME = False): запускает браузер с вашим профилем
@@ -30,6 +30,20 @@ import subprocess
 import shutil
 import threading
 from selenium import webdriver
+
+# Загрузка переменных окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    # Загружаем .env файл из корня проекта
+    PROJECT_ROOT_TEMP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_path = os.path.join(PROJECT_ROOT_TEMP, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"[ЛОГ] Загружены настройки из .env файла")
+except ImportError:
+    print("[ЛОГ] python-dotenv не установлен, используются настройки по умолчанию")
+except Exception as e:
+    print(f"[ЛОГ] Ошибка загрузки .env: {e}, используются настройки по умолчанию")
 
 # Настройка кодировки консоли для Windows
 if sys.platform == 'win32':
@@ -57,59 +71,90 @@ import undetected_chromedriver as uc
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
-LINKS_EXCEL_FILE = os.path.join(DATA_DIR, "links_to_products.xlsx")
-SHEET_LINKS = "Ссылки на товары"
-OUTPUT_EXCEL_FILE = os.path.join(DATA_DIR, "prices_results.xlsx")
+# Функция для чтения настроек из .env с fallback на значения по умолчанию
+def get_env_bool(key, default=False):
+    """Читает булево значение из .env"""
+    value = os.getenv(key, str(default)).strip().lower()
+    return value in ('true', '1', 'yes', 'on')
+
+def get_env_int(key, default=0):
+    """Читает целое число из .env"""
+    try:
+        return int(os.getenv(key, str(default)))
+    except:
+        return default
+
+def get_env_float(key, default=0.0):
+    """Читает число с плавающей точкой из .env"""
+    try:
+        return float(os.getenv(key, str(default)))
+    except:
+        return default
+
+def get_env_str(key, default=""):
+    """Читает строку из .env"""
+    return os.getenv(key, default)
+
+def get_env_tuple(key_min, key_max, default_tuple):
+    """Читает кортеж из двух значений .env"""
+    min_val = get_env_float(key_min, default_tuple[0])
+    max_val = get_env_float(key_max, default_tuple[1])
+    return (min_val, max_val)
+
+# Файл с артикулами и ссылками
+ARTICLES_EXCEL_FILE = os.path.join(PROJECT_ROOT, get_env_str("ARTICLES_EXCEL_FILE", "Articles.xlsx"))
+# Возможные имена листов
+sheet_names_str = get_env_str("POSSIBLE_SHEET_NAMES", "Данные для парсера ВБ,WBarticules,WB,Артикулы,Sheet1")
+POSSIBLE_SHEET_NAMES = [s.strip() for s in sheet_names_str.split(",")]
+OUTPUT_EXCEL_FILE = os.path.join(PROJECT_ROOT, get_env_str("OUTPUT_EXCEL_FILE", "data/prices_results.xlsx"))
 
 # Пути к Chrome
 CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-CHROME_PROFILE_NAME = "Default"  # ИЗМЕНЕНО: Profile 4 не запускается через Selenium, используем Default
+CHROME_PROFILE_NAME = get_env_str("CHROME_PROFILE_NAME", "Default")
 
 # Пути к Edge
 EDGE_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
-EDGE_PROFILE_NAME = "Default"  # "Default" для первого профиля (Пользователь 1), или "Profile 1", "Profile 2" и т.д.
+EDGE_PROFILE_NAME = get_env_str("EDGE_PROFILE_NAME", "Default")
 
-# Использовать remote Chrome/Edge (если запущен через START_EDGE_DEBUG.bat или START_CHROME_DEBUG.bat)
-USE_REMOTE_CHROME = False
-CHROME_DEBUG_PORT = 9222
+# Использовать remote Chrome/Edge
+USE_REMOTE_CHROME = get_env_bool("USE_REMOTE_CHROME", False)
+CHROME_DEBUG_PORT = get_env_int("CHROME_DEBUG_PORT", 9222)
 
-# Использовать временный профиль для парсинга (избегает конфликтов с запущенным Chrome)
-USE_TEMP_PROFILE = True
+# Использовать временный профиль для парсинга
+USE_TEMP_PROFILE = get_env_bool("USE_TEMP_PROFILE", True)
 TEMP_PROFILE_DIR = os.path.join(PROJECT_ROOT, "chrome_parser_profile")
 
-# Копировать данные из Profile 4 в рабочий профиль
-COPY_PROFILE_DATA = True
-SOURCE_PROFILE_FOR_COPY = "Profile 4"  # Откуда копировать cookies
+# Копировать данные из профиля Chrome в рабочий профиль
+COPY_PROFILE_DATA = get_env_bool("COPY_PROFILE_DATA", True)
+SOURCE_PROFILE_FOR_COPY = get_env_str("SOURCE_PROFILE_FOR_COPY", "Profile 4")
 
-# Выбор браузера: 'chrome' или 'edge'
-BROWSER_TYPE = 'chrome'  # 'chrome' или 'edge'
+# Выбор браузера
+BROWSER_TYPE = get_env_str("BROWSER_TYPE", "chrome").lower()
 
 # Режим работы браузера
-HEADLESS_MODE = False  # True = фоновый режим (без визуального окна), False = видимый браузер
-# Примечание: В headless режиме нельзя авторизоваться вручную, используй готовый профиль!
+HEADLESS_MODE = get_env_bool("HEADLESS_MODE", True)
 
 # Пауза для ручной авторизации при первом запуске
-WAIT_FOR_MANUAL_LOGIN = True  # Ждать пока пользователь авторизуется
-MANUAL_LOGIN_TIMEOUT = 120  # Таймаут ожидания авторизации (секунды)
+WAIT_FOR_MANUAL_LOGIN = get_env_bool("WAIT_FOR_MANUAL_LOGIN", True)
+MANUAL_LOGIN_TIMEOUT = get_env_int("MANUAL_LOGIN_TIMEOUT", 120)
 
 # Промежуточное сохранение результатов
-SAVE_INTERMEDIATE_RESULTS = True  # Сохранять результаты каждые N товаров
-SAVE_EVERY_N_PRODUCTS = 10  # Сохранять каждые 10 товаров (0 = только в конце)
+SAVE_INTERMEDIATE_RESULTS = get_env_bool("SAVE_INTERMEDIATE_RESULTS", True)
+SAVE_EVERY_N_PRODUCTS = get_env_int("SAVE_EVERY_N_PRODUCTS", 10)
 
 # Параллельная обработка товаров
-PARALLEL_TABS = 10  # Количество параллельных вкладок
-DELAY_BETWEEN_TABS = (1.0, 2.0)  # Задержка между открытием каждой вкладки (мин, макс) в секундах
-DELAY_BETWEEN_BATCHES = (2, 4)  # Задержка между пакетами (мин, макс) в секундах
-TEST_MODE = False  # True = тест на N товарах, False = все товары
-TEST_PRODUCTS_COUNT = 50  # Количество товаров для тестирования (если TEST_MODE = True)
+PARALLEL_TABS = get_env_int("PARALLEL_TABS", 20)
+DELAY_BETWEEN_TABS = get_env_tuple("DELAY_BETWEEN_TABS_MIN", "DELAY_BETWEEN_TABS_MAX", (1.0, 2.0))
+DELAY_BETWEEN_BATCHES = get_env_tuple("DELAY_BETWEEN_BATCHES_MIN", "DELAY_BETWEEN_BATCHES_MAX", (2, 4))
+TEST_MODE = get_env_bool("TEST_MODE", False)
+TEST_PRODUCTS_COUNT = get_env_int("TEST_PRODUCTS_COUNT", 50)
 
 # Google Таблицы
-GOOGLE_SHEETS_ENABLED = True  # Включить запись в Google Таблицы
-GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1fbMPHE43ikYM90gcSVk_kcUItjzo-OsYI3T25yOJgQU/edit"  # Ссылка на Google Sheet (например: https://docs.google.com/spreadsheets/d/1ABC.../edit)
-GOOGLE_SHEET_NAME = "Лист1"  # Название листа в Google Sheet
-GOOGLE_SERVICE_ACCOUNT_FILE = "google-credentials.json"  # JSON файл Service Account (самый простой способ)
-# Альтернатива: GOOGLE_CREDENTIALS_FILE для OAuth2 (требует один раз авторизоваться через браузер)
-GOOGLE_CREDENTIALS_FILE = "google_credentials.json"  # Файл с OAuth2 credentials
+GOOGLE_SHEETS_ENABLED = get_env_bool("GOOGLE_SHEETS_ENABLED", True)
+GOOGLE_SHEET_URL = get_env_str("GOOGLE_SHEET_URL", "https://docs.google.com/spreadsheets/d/1fbMPHE43ikYM90gcSVk_kcUItjzo-OsYI3T25yOJgQU/edit")
+GOOGLE_SHEET_NAME = get_env_str("GOOGLE_SHEET_NAME", "Лист1")
+GOOGLE_SERVICE_ACCOUNT_FILE = get_env_str("GOOGLE_SERVICE_ACCOUNT_FILE", "google-credentials.json")
+GOOGLE_CREDENTIALS_FILE = get_env_str("GOOGLE_CREDENTIALS_FILE", "google_credentials.json")
 
 
 def check_chrome_running():
@@ -1012,7 +1057,7 @@ def parse_price_from_current_page(driver, article):
 def process_products_parallel(driver, products):
     """
     Обрабатывает товары параллельно по PARALLEL_TABS штук
-    Возвращает список результатов
+    Возвращает кортеж (список результатов, количество сохраненных товаров)
     """
     results = []
     last_saved_count = 0  # Счетчик последнего сохранения
@@ -1021,7 +1066,7 @@ def process_products_parallel(driver, products):
     except (InvalidSessionIdException, Exception) as e:
         print(f"\n[!] ОШИБКА: Браузер закрыт или сессия потеряна: {e}")
         print(f"    Возвращаю уже собранные результаты: {len(results)} товаров")
-        return results
+        return (results, last_saved_count)
     
     total = len(products)
     
@@ -1184,8 +1229,10 @@ def process_products_parallel(driver, products):
             if SAVE_INTERMEDIATE_RESULTS and len(results) - last_saved_count >= SAVE_EVERY_N_PRODUCTS:
                 print(f"\n💾 Промежуточное сохранение в конце пакета ({len(results)} товаров)...")
                 if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
-                    print(f"📊 Запись в Google Таблицы ({len(results)} товаров)...")
-                    if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
+                    # Сохраняем только новые результаты (с last_saved_count до конца)
+                    new_results = results[last_saved_count:]
+                    print(f"📊 Запись в Google Таблицы ({len(new_results)} новых товаров)...")
+                    if save_results_to_google_sheets(new_results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME, append_only=True):
                         print(f"✓ Сохранено в Google Таблицы")
                         last_saved_count = len(results)  # Обновляем счетчик
                     else:
@@ -1204,9 +1251,9 @@ def process_products_parallel(driver, products):
         print(f"    Возвращаю уже собранные результаты: {len(results)} товаров")
         import traceback
         traceback.print_exc()
-        return results  # Возвращаем то, что успели собрать
+        return (results, last_saved_count)  # Возвращаем то, что успели собрать
     
-    return results
+    return (results, last_saved_count)
 
 
 def get_price_from_product_page(driver, product_url, article):
@@ -1379,7 +1426,64 @@ def save_results_to_excel(results, output_file):
         return False
 
 
-def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
+def get_last_processed_row_count(sheet_url, sheet_name="Лист1"):
+    """
+    Получает количество уже обработанных строк в Google Таблице
+    Возвращает количество строк (без учета заголовка), или 0 если таблица пустая
+    Выдает ошибку если таблица недоступна
+    """
+    if not GOOGLE_SHEETS_ENABLED:
+        raise Exception("Google Sheets отключен (GOOGLE_SHEETS_ENABLED = False)")
+    
+    if not sheet_url:
+        raise Exception("Google Sheet URL не указан (GOOGLE_SHEET_URL пустой)")
+    
+    try:
+        import gspread
+    except ImportError:
+        raise Exception("Библиотека gspread не установлена. Установите: pip install gspread google-auth")
+    
+    try:
+        # Извлекаем ID таблицы из URL
+        if '/d/' in sheet_url:
+            sheet_id = sheet_url.split('/d/')[1].split('/')[0]
+        else:
+            raise Exception("Неверный формат ссылки на Google Sheet")
+        
+        # Подключаемся к Google Sheets
+        service_account_file = os.path.join(PROJECT_ROOT, GOOGLE_SERVICE_ACCOUNT_FILE)
+        
+        if os.path.exists(service_account_file):
+            gc = gspread.service_account(filename=service_account_file)
+        else:
+            raise Exception(f"Service Account файл не найден: {service_account_file}")
+        
+        spreadsheet = gc.open_by_key(sheet_id)
+        
+        # Получаем лист
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            raise Exception(f"Лист '{sheet_name}' не найден в Google Таблице")
+        
+        # Получаем все значения
+        all_values = worksheet.get_all_values()
+        
+        # Если таблица пустая или только заголовок - возвращаем 0
+        if len(all_values) <= 1:
+            if len(all_values) == 0:
+                raise Exception(f"Google Таблица пустая. Сначала создайте заголовки.")
+            # Только заголовок
+            return 0
+        
+        # Возвращаем количество строк без заголовка
+        return len(all_values) - 1
+        
+    except Exception as e:
+        raise Exception(f"Ошибка при чтении Google Таблицы: {e}")
+
+
+def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены", append_only=False):
     """
     Сохраняет результаты в Google Таблицы автоматически через gspread с OAuth2
     
@@ -1485,15 +1589,16 @@ def save_results_to_google_sheets(results, sheet_url, sheet_name="Цены"):
         except gspread.exceptions.WorksheetNotFound:
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
         
-        # Очищаем лист (кроме заголовков)
-        if len(worksheet.get_all_values()) > 1:
-            worksheet.delete_rows(2, len(worksheet.get_all_values()))
-        
         # Записываем заголовки если их нет
         if len(worksheet.get_all_values()) == 0:
             worksheet.append_row(["ссылка на товар", "артикул", "цена", "цена с картой"])
         
-        # Записываем данные
+        # Если append_only=False, очищаем лист (кроме заголовков) и перезаписываем все
+        if not append_only:
+            if len(worksheet.get_all_values()) > 1:
+                worksheet.delete_rows(2, len(worksheet.get_all_values()))
+        
+        # Записываем данные (добавляем в конец если append_only=True, иначе перезаписываем)
         print(f"\n📊 Запись в Google Таблицы...")
         batch_size = 100  # Google Sheets API ограничение
         for i in range(0, len(results), batch_size):
@@ -1573,31 +1678,91 @@ def main():
     
     print(f"\n✓ Конфигурация проверена")
     
-    # Загружаем Excel со ссылками
+    # Загружаем Excel с артикулами и ссылками
+    print(f"\n[1/3] Загрузка данных из {ARTICLES_EXCEL_FILE}...")
     try:
-        wb = load_workbook(LINKS_EXCEL_FILE)
+        wb = load_workbook(ARTICLES_EXCEL_FILE)
     except Exception as e:
         print(f"\n[!] ОШИБКА открытия Excel: {e}")
-        print(f"    Убедись что файл '{LINKS_EXCEL_FILE}' закрыт!")
-        print(f"    Сначала запусти Create_Links_Excel.py для создания файла со ссылками")
+        print(f"    Убедись что файл '{ARTICLES_EXCEL_FILE}' закрыт!")
         return
     
-    ws_in = wb[SHEET_LINKS]
+    # Определяем правильный лист
+    sheet_name = None
+    for possible_name in POSSIBLE_SHEET_NAMES:
+        if possible_name in wb.sheetnames:
+            sheet_name = possible_name
+            break
     
-    # Загружаем ссылки и артикулы
+    if not sheet_name:
+        # Используем первый лист если ничего не найдено
+        if wb.sheetnames:
+            sheet_name = wb.sheetnames[0]
+            print(f"[ЛОГ] Используется первый доступный лист: '{sheet_name}'")
+        else:
+            print(f"\n[!] ОШИБКА: В файле нет листов!")
+            wb.close()
+            return
+    else:
+        print(f"[ЛОГ] Используется лист: '{sheet_name}'")
+    
+    ws_in = wb[sheet_name]
+    
+    # Загружаем ссылки и артикулы из Articles.xlsx
+    # Формат: колонка A - ссылка, колонка B - артикул
+    # Начинаем со 2-й строки (первая может быть заголовком)
     products = []
-    for row in ws_in.iter_rows(min_row=2, max_col=2, values_only=True):
-        if row[0] and row[1]:  # ссылка и артикул
-            products.append({
-                'url': str(row[0]).strip(),
-                'article': str(row[1]).strip()
-            })
+    start_row = 1
     
-    print(f"\n[1/3] Найдено товаров: {len(products)}")
+    # Проверяем первую строку - если это заголовки, начинаем со 2-й
+    first_row = list(ws_in.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+    if first_row[0] and isinstance(first_row[0], str):
+        first_cell_lower = str(first_row[0]).lower()
+        if any(keyword in first_cell_lower for keyword in ['ссылка', 'link', 'url', 'артикул', 'article']):
+            start_row = 2
+            print(f"[ЛОГ] Обнаружены заголовки, пропускаю первую строку")
+    
+    # Читаем все строки до конца файла (включая пустые, чтобы не пропустить данные)
+    for row_num in range(start_row, ws_in.max_row + 1):
+        row = list(ws_in.iter_rows(min_row=row_num, max_row=row_num, max_col=2, values_only=True))[0]
+        url = str(row[0]).strip() if row[0] else ""
+        article = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+        
+        # Пропускаем полностью пустые строки
+        if not url and not article:
+            continue
+        
+        # Если есть артикул во втором столбце - используем его
+        if article:
+            # Если есть ссылка - используем её, иначе генерируем
+            if url and "wildberries.ru" in url:
+                products.append({
+                    'url': url,
+                    'article': article
+                })
+            else:
+                # Генерируем ссылку из артикула
+                products.append({
+                    'url': f"https://www.wildberries.ru/catalog/{article}/detail.aspx",
+                    'article': article
+                })
+        # Если артикула нет, но есть ссылка - извлекаем артикул из ссылки
+        elif url and "wildberries.ru" in url:
+            import re
+            match = re.search(r'/catalog/(\d+)/', url)
+            if match:
+                article = match.group(1)
+                products.append({
+                    'url': url,
+                    'article': article
+                })
+    
+    print(f"    ✓ Найдено товаров: {len(products)}")
     
     if len(products) == 0:
-        print("[!] Нет товаров для обработки!")
-        print(f"    Сначала запусти Create_Links_Excel.py для создания файла со ссылками")
+        print("\n[!] Нет товаров для обработки!")
+        print(f"    Проверьте файл {ARTICLES_EXCEL_FILE}, лист '{sheet_name}'")
+        print(f"    Должны быть ссылки в колонке A и артикулы в колонке B")
         wb.close()
         return
     
@@ -1606,11 +1771,43 @@ def main():
         products = products[:TEST_PRODUCTS_COUNT]
         print(f"⚠️  ТЕСТОВЫЙ РЕЖИМ: обработка первых {len(products)} товаров")
     
+    # Проверяем Google Таблицу для продолжения с места остановки
+    skip_count = 0
+    total_products = len(products)
+    if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
+        try:
+            print(f"\n[1.5/3] Проверка Google Таблицы для продолжения...")
+            last_row_count = get_last_processed_row_count(GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME)
+            skip_count = last_row_count
+            if skip_count > 0:
+                print(f"  ✓ Найдено уже обработанных товаров: {skip_count}")
+                if skip_count >= total_products:
+                    print(f"\n⚠️  ВСЕ ТОВАРЫ УЖЕ ОБРАБОТАНЫ!")
+                    print(f"    В Google Таблице записано {skip_count} товаров")
+                    print(f"    Всего товаров в файле: {total_products}")
+                    print(f"    Парсинг не требуется.")
+                    wb.close()
+                    return
+                # Пропускаем уже обработанные товары и продолжаем с места остановки
+                products = products[skip_count:]
+                print(f"  → Продолжаю с товара #{skip_count + 1} (пропущено {skip_count} товаров)")
+                print(f"  → Осталось обработать: {len(products)} товаров из {total_products}")
+            else:
+                print(f"  ✓ Таблица пустая, начинаю с начала")
+                print(f"  → Буду обрабатывать все {total_products} товаров")
+        except Exception as e:
+            print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА при проверке Google Таблицы:")
+            print(f"    {e}")
+            print(f"\n    Парсинг остановлен. Исправьте проблему и запустите снова.")
+            wb.close()
+            return
+    
     # Запускаем Chrome
     print(f"\n[2/3] Запуск Chrome...")
     
     driver = None
     results = []  # Инициализируем результаты вне try, чтобы сохранить в finally
+    last_saved_count = 0  # Счетчик сохраненных товаров для финального сохранения
     try:
         driver = setup_browser_driver()
         
@@ -1673,13 +1870,15 @@ def main():
         print("="*80)
         
         # Используем параллельную обработку
-        parsed_results = process_products_parallel(driver, products)
+        parsed_data = process_products_parallel(driver, products)
         # Объединяем результаты (на случай если уже были частичные результаты)
-        if parsed_results:
-            results = parsed_results
+        if parsed_data:
+            results, last_saved_count = parsed_data
             print(f"\n✓ Парсинг завершен: собрано {len(results)} товаров")
         else:
             print(f"\n⚠ Парсинг не вернул результатов (возможно произошла ошибка)")
+            results = []
+            last_saved_count = 0
         
     except Exception as e:
         print(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА: {e}")
@@ -1696,12 +1895,17 @@ def main():
         if len(results) > 0:
             # Сохраняем в Google Таблицы (единственный способ сохранения)
             if GOOGLE_SHEETS_ENABLED and GOOGLE_SHEET_URL:
-                print(f"\n📊 Финальная запись в Google Таблицы ({len(results)} товаров)...")
-                if save_results_to_google_sheets(results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME):
-                    print(f"✓ Данные загружены в Google Таблицы")
-                    print(f"  Ссылка: {GOOGLE_SHEET_URL}")
+                # Сохраняем только несохраненные товары (если есть)
+                unsaved_results = results[last_saved_count:]
+                if len(unsaved_results) > 0:
+                    print(f"\n📊 Финальная запись в Google Таблицы ({len(unsaved_results)} несохраненных товаров)...")
+                    if save_results_to_google_sheets(unsaved_results, GOOGLE_SHEET_URL, GOOGLE_SHEET_NAME, append_only=True):
+                        print(f"✓ Данные загружены в Google Таблицы")
+                        print(f"  Ссылка: {GOOGLE_SHEET_URL}")
+                    else:
+                        print(f"⚠ Не удалось сохранить в Google Таблицы")
                 else:
-                    print(f"⚠ Не удалось сохранить в Google Таблицы")
+                    print(f"\n✓ Все товары уже сохранены в Google Таблицы")
             else:
                 print(f"\n⚠ Google Таблицы не настроены!")
                 print(f"   Установите GOOGLE_SHEETS_ENABLED = True и укажите GOOGLE_SHEET_URL")

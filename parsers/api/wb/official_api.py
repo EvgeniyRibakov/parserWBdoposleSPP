@@ -207,3 +207,17 @@ class WBOfficialAPI:
         
         return product_info
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
