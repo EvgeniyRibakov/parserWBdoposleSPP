@@ -1162,25 +1162,28 @@ def process_products_parallel(driver, products):
                     print(f"  [{batch_start + idx + 1}/{total}] Открываю: {product['article']}")
                     # Открываем вкладку
                     driver.execute_script("window.open(arguments[0], '_blank');", product['url'])
-                    time.sleep(0.1)  # Небольшая задержка для открытия вкладки
+                    time.sleep(0.2)  # Увеличена задержка для открытия вкладки
                     
                     # Получаем handle новой вкладки (последняя открытая)
                     try:
                         all_handles = driver.window_handles
-                        if len(all_handles) > initial_handles_count + idx:
+                        current_count = len(all_handles)
+                        print(f"      [ЛОГ] Вкладок после открытия: {current_count}")
+                        
+                        # Проверяем что вкладка действительно открылась
+                        if current_count > initial_handles_count + idx:
                             new_tab_handle = all_handles[-1]
                             # Сохраняем соответствие между вкладкой и товаром
                             opened_tabs_map[new_tab_handle] = product
                             # Переключаемся на новую вкладку чтобы она точно открылась и загрузилась
                             driver.switch_to.window(new_tab_handle)
-                            time.sleep(0.1)  # Даем время на загрузку URL
+                            time.sleep(0.2)  # Даем время на загрузку URL
                             # Возвращаемся на главную вкладку
                             driver.switch_to.window(main_window)
+                        else:
+                            print(f"      [ЛОГ] ⚠ Вкладка не открылась, возможно заблокирована браузером")
                     except Exception as tab_error:
                         print(f"      [ЛОГ] ⚠ Ошибка при сохранении соответствия вкладки: {tab_error}")
-                    
-                    current_handles = len(driver.window_handles)
-                    print(f"      [ЛОГ] Вкладок после открытия: {current_handles}")
                 except Exception as e:
                     print(f"  [{batch_start + idx + 1}/{total}] ⚠ Ошибка: {e}")
                     import traceback
@@ -1188,13 +1191,35 @@ def process_products_parallel(driver, products):
             
             # ФАЗА 2: Ждем загрузки всех вкладок
             print(f"\n[2/4] Жду полной загрузки страниц...")
-            time.sleep(0.5)  # Минимальная задержка для открытия вкладок
+            time.sleep(1.5)  # Увеличена задержка для загрузки вкладок
             
             # Получаем все вкладки кроме главной
             try:
                 all_handles = driver.window_handles
                 tabs = [h for h in all_handles if h != main_window]
                 print(f"  [ЛОГ] Всего окон: {len(all_handles)}, вкладок для парсинга: {len(tabs)}")
+                
+                # Если вкладки не открылись, пробуем еще раз
+                if len(tabs) == 0:
+                    print(f"  ⚠ ВНИМАНИЕ: Вкладки не открылись! Пробую еще раз...")
+                    driver.switch_to.window(main_window)
+                    for idx, product in enumerate(batch):
+                        try:
+                            driver.execute_script(f"window.open('{product['url']}', '_blank');")
+                            time.sleep(0.2)
+                            if len(driver.window_handles) > initial_handles_count + idx + 1:
+                                driver.switch_to.window(driver.window_handles[-1])
+                                time.sleep(0.1)
+                                driver.switch_to.window(main_window)
+                        except Exception as e:
+                            print(f"  [ЛОГ] Ошибка при повторном открытии вкладки {idx+1}: {e}")
+                    time.sleep(0.5)
+                    try:
+                        all_handles = driver.window_handles
+                        tabs = [h for h in all_handles if h != main_window]
+                        print(f"  [ЛОГ] После повторной попытки: {len(tabs)} вкладок")
+                    except:
+                        tabs = []
                 
                 # Если у нас есть сохраненное соответствие, используем его
                 # Иначе создаем соответствие по порядку (fallback)
@@ -1206,32 +1231,6 @@ def process_products_parallel(driver, products):
             except Exception as e:
                 print(f"  ⚠ Ошибка получения вкладок: {e}")
                 tabs = []
-            
-            # Минимальная задержка для загрузки страниц (основная задержка будет при парсинге каждой страницы)
-            time.sleep(1)
-            
-            if len(tabs) == 0:
-                print(f"  ⚠ ВНИМАНИЕ: Вкладки не открылись! Пробую еще раз...")
-                # Пробуем открыть еще раз с переключением на каждую вкладку
-                driver.switch_to.window(main_window)
-                for idx, product in enumerate(batch):
-                    try:
-                        driver.execute_script(f"window.open('{product['url']}', '_blank');")
-                        time.sleep(0.1)
-                        # Переключаемся на новую вкладку чтобы она точно открылась
-                        if len(driver.window_handles) > initial_handles_count + idx + 1:
-                            driver.switch_to.window(driver.window_handles[-1])
-                            time.sleep(0.05)
-                            driver.switch_to.window(main_window)
-                    except Exception as e:
-                        print(f"  [ЛОГ] Ошибка при повторном открытии вкладки {idx+1}: {e}")
-                time.sleep(0.5)
-                try:
-                    all_handles = driver.window_handles
-                    tabs = [h for h in all_handles if h != main_window]
-                    print(f"  [ЛОГ] После повторной попытки: {len(tabs)} вкладок")
-                except:
-                    tabs = []
             
             print(f"  ✓ Все {len(tabs)} вкладок загружены")
             
@@ -2129,6 +2128,60 @@ def main():
                 print(f"\n[!] Прервано пользователем")
                 driver.quit()
                 return
+            
+            # Открываем тестовую вкладку для подтверждения разрешения на открытие вкладок
+            print(f"\n{'='*80}")
+            print("⏸  ПОДТВЕРЖДЕНИЕ РАЗРЕШЕНИЯ НА ОТКРЫТИЕ ВКЛАДОК")
+            print(f"{'='*80}")
+            print(f"\n📋 ИНСТРУКЦИЯ:")
+            print(f"   1. Сейчас открою тестовую вкладку с товаром...")
+            print(f"   2. В браузере появится запрос: 'Разрешить этому сайту открывать вкладки?'")
+            print(f"   3. Нажмите 'РАЗРЕШИТЬ' или 'ALLOW' в браузере")
+            print(f"   4. После этого вернитесь сюда и нажмите ENTER")
+            print(f"{'='*80}\n")
+            
+            try:
+                # Открываем тестовую вкладку с первым товаром из списка (если есть)
+                if 'products' in locals() and len(products) > 0:
+                    test_url = products[0]['url']
+                    print(f"[ЛОГ] Открываю тестовую вкладку: {test_url}")
+                    driver.execute_script("window.open(arguments[0], '_blank');", test_url)
+                    time.sleep(2)
+                    
+                    # Переключаемся на новую вкладку
+                    if len(driver.window_handles) > 1:
+                        driver.switch_to.window(driver.window_handles[-1])
+                        print(f"[ЛОГ] ✓ Тестовая вкладка открыта")
+                        time.sleep(1)
+                        # Возвращаемся на главную вкладку
+                        driver.switch_to.window(driver.window_handles[0])
+                    else:
+                        print(f"[ЛОГ] ⚠ Вкладка не открылась, возможно браузер заблокировал")
+                else:
+                    # Если список товаров еще не загружен, используем стандартный URL
+                    test_url = "https://www.wildberries.ru/catalog/123456789/detail.aspx"
+                    print(f"[ЛОГ] Открываю тестовую вкладку: {test_url}")
+                    driver.execute_script("window.open(arguments[0], '_blank');", test_url)
+                    time.sleep(2)
+            except Exception as e:
+                print(f"[ЛОГ] ⚠ Ошибка открытия тестовой вкладки: {e}")
+            
+            try:
+                input(f"\n⏸ Нажмите ENTER после того как разрешите открытие вкладок в браузере...")
+            except KeyboardInterrupt:
+                print(f"\n[!] Прервано пользователем")
+                driver.quit()
+                return
+            
+            # Закрываем тестовую вкладку если она открыта
+            try:
+                if len(driver.window_handles) > 1:
+                    driver.switch_to.window(driver.window_handles[-1])
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
+                    print(f"[ЛОГ] ✓ Тестовая вкладка закрыта")
+            except:
+                pass
         elif WAIT_FOR_MANUAL_LOGIN and HEADLESS_MODE:
             print(f"\n⚠️  ВНИМАНИЕ: Headless режим активен!")
             print(f"   Авторизация через браузер невозможна (браузер не виден).")
