@@ -1,0 +1,11 @@
+# Зависимости для Parser_WB_Missing.py
+selenium>=4.0.0
+undetected-chromedriver>=3.5.0
+openpyxl>=3.1.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+gspread>=5.0.0
+google-auth>=2.0.0
+google-auth-httplib2>=0.1.0
+
+
